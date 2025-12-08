@@ -1,26 +1,40 @@
-## PoneglyphDB: Efficient Non-interactive Zero-Knowledge Proofs for Arbitrary SQL-Query Verification
+# PoneglyphDB: Efficient Non-interactive Zero-Knowledge Proofs for Arbitrary SQL-Query Verification
 
-# halo2-TPCH instruction:
-To generate the proofs for SQL queries Q1, Q3, Q5, Q8, Q9 and Q18, please run the following commands at the root of the project.
+**PoneglyphDB** provides efficient non-interactive zero-knowledge proofs (NIZKs) for verifying arbitrary SQL queries. This repository includes Halo2 circuits for TPC-H workloads and end-to-end proof generation.
 
+## Halo2-TPCH Instructions
+
+To generate the proofs for SQL queries Q1, Q3, Q5, Q8, Q9, and Q18, please run the following commands at the root of the project:
+
+```bash
+# Query 1
 cargo test --package halo2-experiments --lib -- sql::q1_final_v4::tests::test_1 --exact --nocapture
 
+# Query 3
 cargo test --package halo2-experiments --lib -- sql::q3_final_v7::tests::test_1 --exact --nocapture
 
+# Query 5
 cargo test --package halo2-experiments --lib -- sql::q5_final_v4::tests::test_1 --exact --nocapture
 
+# Query 8
 cargo test --package halo2-experiments --lib -- sql::q8_final_v3::tests::test_1 --exact --nocapture
 
+# Query 9
 cargo test --package halo2-experiments --lib -- sql::q9_final_v2::tests::test_1 --exact --nocapture
 
+# Query 18
 cargo test --package halo2-experiments --lib -- sql::q18_final_v2::tests::test_1 --exact --nocapture
 
 
 
-# Notes:
+## Notes
+# Prerequisites: Stack Size
+Please enable sufficient RUST_MIN_STACK before running proofs:
 Please enable sufficient RUST_MIN_STACK by running, e.g., "export RUST_MIN_STACK=33554432"
 
-For different datasets, please choose the correct public parameters. For 60k, 120k, 240k Rows, k = 16, 17, 18 respectively for Q1, Q5, Q8, Q9, Q18. For 60k, 120k, 240k Rows, k = 15, 16, 17 respectively for Q3.
+export RUST_MIN_STACK=33554432
+
+Public Parameter Selection (k)For different datasets, please choose the correct public parameters (k).Dataset SizeQ1, Q5, Q8, Q9, Q18Q360k Rowsk = 16k = 15120k Rowsk = 17k = 16240k Rowsk = 18k = 17
 
 
 ## Citation
