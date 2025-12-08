@@ -23,8 +23,9 @@ For different datasets, please choose the correct public parameters. For 60k, 12
 
 ## Citation
 
-If you find our work helpful, please consider citing the following:
+If you find our work helpful, please consider citing:
 
+```bibtex
 @article{gu2025poneglyphdb,
   title={PoneglyphDB: Efficient Non-interactive Zero-Knowledge Proofs for Arbitrary SQL-Query Verification},
   author={Gu, Binbin and Fang, Juncheng and Nawab, Faisal},
@@ -35,3 +36,4 @@ If you find our work helpful, please consider citing the following:
   year={2025},
   publisher={ACM New York, NY, USA}
 }
+
