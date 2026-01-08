@@ -3,12 +3,12 @@
 use halo2_proofs::{halo2curves::ff::PrimeField, plonk::Expression};
 
 use crate::chips::is_zero::{IsZeroChip, IsZeroConfig};
-// use crate::chips::less_than_vector::{LtVecChip, LtVecConfig, LtVecInstruction};
-// use crate::chips::lessthan_or_equal_vector::{LtEqVecChip, LtEqVecConfig, LtEqVecInstruction};
-use crate::chips::less_than::{LtChip, LtConfig, LtInstruction};
-use crate::chips::lessthan_or_equal_generic::{
-    LtEqGenericChip, LtEqGenericConfig, LtEqGenericInstruction,
-};
+use crate::chips::less_than_vector::{LtVecChip, LtVecConfig, LtVecInstruction};
+use crate::chips::lessthan_or_equal_vector::{LtEqVecChip, LtEqVecConfig, LtEqVecInstruction};
+// use crate::chips::less_than::{LtChip, LtConfig, LtInstruction};
+// use crate::chips::lessthan_or_equal_generic::{
+//     LtEqGenericChip, LtEqGenericConfig, LtEqGenericInstruction,
+// };
 use crate::chips::permutation_any::{PermAnyChip, PermAnyConfig};
 
 use std::thread::sleep;
@@ -23,13 +23,14 @@ use std::mem;
 use std::process;
 use std::time::Instant;
 
-const NUM_BYTES: usize = 5;
+const NUM_BYTES: usize = 4;
 
 pub trait Field: PrimeField<Repr = [u8; 32]> {}
 
 impl<F> Field for F where F: PrimeField<Repr = [u8; 32]> {}
 
 // #[derive(Default)]
+// We should use the selector to skip the row which does not satisfy shipdate values
 
 #[derive(Clone, Debug)]
 pub struct TestCircuitConfig<F: Field + Ord> {
@@ -38,11 +39,9 @@ pub struct TestCircuitConfig<F: Field + Ord> {
     // q_perm: Vec<Selector>,
     q_sort: Vec<Selector>,
     q_accu: Selector,
-    customer: Vec<Column<Advice>>,          // c_mkt, c_custkey
-    orders: Vec<Column<Advice>>,            // o_orderdate, o_shippri, o_custkey, o_orderkey
-    lineitem_old: Vec<Vec<Column<Advice>>>, // l_orderkey, l_extened, l_dis, l_ship;
-    //we put lineitem into two part to reduce the maximal number of row to be used
-    lineitem: Vec<Column<Advice>>, // l_orderkey, l_extened, l_dis, l_ship;
+    customer: Vec<Column<Advice>>, // c_mkt, c_custkey
+    orders: Vec<Column<Advice>>,   // o_orderdate, o_shippri, o_custkey, o_orderkey
+    lineitem: Vec<Column<Advice>>, // l_orderkey, l_extened, l_dis, l_ship
 
     join_group: Vec<Vec<Column<Advice>>>,
     disjoin_group: Vec<Vec<Column<Advice>>>,
@@ -62,11 +61,10 @@ pub struct TestCircuitConfig<F: Field + Ord> {
     // // cartesian: Vec<Column<Advice>>,
     equal_check: Column<Advice>, // check if sorted_revenue[i-1] = sorted_revenue[i]
     revenue: Column<Advice>,
-    lt_compare_condition: Vec<LtConfig<F, NUM_BYTES>>,
-    // lt_compare_condition: Vec<LtVecConfig<F, NUM_BYTES>>,
+    // lt_compare_condition: Vec<LtConfig<F, NUM_BYTES>>,
+    lt_compare_condition: Vec<LtVecConfig<F, NUM_BYTES>>,
     equal_condition: Vec<IsZeroConfig<F>>,
-    // compare_condition: Vec<LtEqVecConfig<F, NUM_BYTES>>,
-    compare_condition: Vec<LtEqGenericConfig<F, NUM_BYTES>>,
+    compare_condition: Vec<LtEqVecConfig<F, NUM_BYTES>>,
     // perm: Vec<PermAnyConfig>,
     instance: Column<Instance>,
     instance_test: Column<Advice>,
@@ -95,12 +93,12 @@ impl<F: Field + Ord> TestChip<F> {
         // meta.enable_equality(instance_test2);
 
         let mut q_enable = Vec::new();
-        for _ in 0..4 {
+        for i_ in 0..3 {
             q_enable.push(meta.selector());
         }
 
         let mut q_sort = Vec::new();
-        for _ in 0..4 {
+        for i_ in 0..4 {
             q_sort.push(meta.selector());
         }
 
@@ -112,7 +110,7 @@ impl<F: Field + Ord> TestChip<F> {
                 q_join.push(meta.complex_selector());
             }
         }
-        for _ in 0..5 {
+        for i_ in 0..5 {
             q_sort.push(meta.selector());
         }
 
@@ -129,20 +127,11 @@ impl<F: Field + Ord> TestChip<F> {
             orders.push(meta.advice_column());
             lineitem.push(meta.advice_column());
         }
-        let mut lineitem_old = Vec::new();
-        for _ in 0..2 {
-            let mut col = Vec::new();
-            for _ in 0..4 {
-                col.push(meta.advice_column());
-            }
-            lineitem_old.push(col);
-        }
         let mut condition = Vec::new();
         for _ in 0..3 {
             // use meta.equality() for copying check, so we do not need three conditions here
             condition.push(meta.advice_column());
         }
-        meta.enable_equality(condition[2]);
 
         let mut deduplicate = Vec::new();
         let mut deduplicate_helper = Vec::new();
@@ -209,7 +198,7 @@ impl<F: Field + Ord> TestChip<F> {
         }
 
         let mut check = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..3 {
             check.push(meta.advice_column());
         }
 
@@ -237,7 +226,7 @@ impl<F: Field + Ord> TestChip<F> {
 
         let mut lt_compare_condition = Vec::new();
         // o_orderdate < date ':2'
-        let config = LtChip::configure(
+        let config = LtVecChip::configure(
             meta,
             |meta| meta.query_selector(q_enable[1]),
             |meta| meta.query_advice(orders[0], Rotation::cur()),
@@ -256,12 +245,12 @@ impl<F: Field + Ord> TestChip<F> {
 
         lt_compare_condition.push(config);
 
-        // l_shipdate > date ':2', part1
-        let config: LtConfig<F, NUM_BYTES> = LtChip::configure(
+        // l_shipdate > date ':2'
+        let config: LtVecConfig<F, NUM_BYTES> = LtVecChip::configure(
             meta,
             |meta| meta.query_selector(q_enable[2]),
             |meta| meta.query_advice(condition[2], Rotation::cur()),
-            |meta| meta.query_advice(lineitem_old[0][3], Rotation::cur()), // we put the left and right value at the first two positions of value_l
+            |meta| meta.query_advice(lineitem[3], Rotation::cur()), // we put the left and right value at the first two positions of value_l
         );
 
         meta.create_gate(
@@ -269,24 +258,6 @@ impl<F: Field + Ord> TestChip<F> {
             |meta| {
                 let q_enable = meta.query_selector(q_enable[2]);
                 let check = meta.query_advice(check[2], Rotation::cur());
-                vec![q_enable * (config.is_lt(meta, None) - check)]
-            },
-        );
-        lt_compare_condition.push(config);
-
-        // l_shipdate > date ':2', part2
-        let config: LtConfig<F, NUM_BYTES> = LtChip::configure(
-            meta,
-            |meta| meta.query_selector(q_enable[3]),
-            |meta| meta.query_advice(condition[2], Rotation::cur()),
-            |meta| meta.query_advice(lineitem_old[1][3], Rotation::cur()), // we put the left and right value at the first two positions of value_l
-        );
-
-        meta.create_gate(
-            "verifies l_shipdate > date ':2'", // just use less_than for testing here
-            |meta| {
-                let q_enable = meta.query_selector(q_enable[3]);
-                let check = meta.query_advice(check[3], Rotation::cur());
                 vec![q_enable * (config.is_lt(meta, None) - check)]
             },
         );
@@ -313,6 +284,7 @@ impl<F: Field + Ord> TestChip<F> {
         }
 
         // two permutation check: join and disjoin
+
         PermAnyChip::configure(
             meta,
             q_join[2],
@@ -320,7 +292,6 @@ impl<F: Field + Ord> TestChip<F> {
             orders.clone(),
             perm_helper[0].clone(),
         );
-
         PermAnyChip::configure(
             meta,
             q_join[3],
@@ -338,12 +309,12 @@ impl<F: Field + Ord> TestChip<F> {
         );
 
         // two dedup permutation check: deduplicate and dedup_sort
-        meta.lookup_any("dedup permutation check", |meta| {
+        meta.lookup_any("dedup permtuation check", |meta| {
             let input = meta.query_advice(deduplicate_helper[0], Rotation::cur());
             let table = meta.query_advice(dedup_sort[0], Rotation::cur());
             vec![(input, table)]
         });
-        meta.lookup_any("dedup permutation check", |meta| {
+        meta.lookup_any("dedup permtuation check", |meta| {
             let input = meta.query_advice(deduplicate_helper[1], Rotation::cur());
             let table = meta.query_advice(dedup_sort[1], Rotation::cur());
             vec![(input, table)]
@@ -391,7 +362,6 @@ impl<F: Field + Ord> TestChip<F> {
                 vec![q * (p1 - p2)]
             },
         );
-
         meta.lookup_any("check join2", |meta| {
             let inputs: Vec<_> = join2
                 .iter()
@@ -414,11 +384,11 @@ impl<F: Field + Ord> TestChip<F> {
 
         // two dedup sort check
         for i in 0..2 {
-            let config = LtChip::configure(
+            let config = LtVecChip::configure(
                 meta,
                 |meta| meta.query_selector(q_sort[i]),
-                |meta| meta.query_advice(dedup_sort[i], Rotation::prev()),
-                |meta| meta.query_advice(dedup_sort[i], Rotation::cur()), // we put the left and right value at the first two positions of value_l
+                |meta| meta.query_advice(dedup_sort[i], Rotation::cur()),
+                |meta| meta.query_advice(dedup_sort[i], Rotation::next()), // we put the left and right value at the first two positions of value_l
             );
             lt_compare_condition.push(config.clone());
             meta.create_gate("t[i-1]<t[i]'", |meta| {
@@ -427,87 +397,90 @@ impl<F: Field + Ord> TestChip<F> {
             });
         }
 
+        // // join check
+
         // // group by
         let mut compare_condition = Vec::new();
-        let config = LtEqGenericChip::configure(
-            meta,
-            |meta| meta.query_selector(q_sort[2]),
-            |meta| {
-                vec![
-                    meta.query_advice(groupby[0], Rotation::prev()),
-                    meta.query_advice(groupby[1], Rotation::prev()),
-                    meta.query_advice(groupby[2], Rotation::prev()),
-                ]
-            },
-            |meta| {
-                vec![
-                    meta.query_advice(groupby[0], Rotation::cur()),
-                    meta.query_advice(groupby[1], Rotation::cur()),
-                    meta.query_advice(groupby[2], Rotation::cur()),
-                ]
-            },
-        );
-        compare_condition.push(config);
+        // let config = LtEqVecChip::configure(
+        //     meta,
+        //     |meta| meta.query_selector(q_sort[2]),
+        //     |meta| {
+        //         vec![
+        //             meta.query_advice(groupby[0], Rotation::cur()),
+        //             meta.query_advice(groupby[1], Rotation::cur()),
+        //             meta.query_advice(groupby[2], Rotation::cur()),
+        //         ]
+        //     },
+        //     |meta| {
+        //         vec![
+        //             meta.query_advice(groupby[0], Rotation::next()),
+        //             meta.query_advice(groupby[1], Rotation::next()),
+        //             meta.query_advice(groupby[2], Rotation::next()),
+        //         ]
+        //     },
+        // );
+        // compare_condition.push(config);
 
-        // // sum gate: sum(l_extendedprice * (1 - l_discount)) as revenue, note that revenue column starts by zero and its length is 1 more than others
-        // meta.create_gate("accumulate constraint", |meta| {
-        //     let q_accu = meta.query_selector(q_accu);
-        //     let prev_revenue = meta.query_advice(revenue.clone(), Rotation::cur());
-        //     let extendedprice = meta.query_advice(groupby[3], Rotation::cur());
-        //     let discount = meta.query_advice(groupby[4], Rotation::cur());
-        //     let sum_revenue = meta.query_advice(revenue, Rotation::next());
-        //     let check = meta.query_advice(equal_check, Rotation::cur());
-
-        //     vec![
-        //         q_accu.clone()
-        //             * (check.clone() * prev_revenue
-        //                 + extendedprice.clone()
-        //                     * (Expression::Constant(F::from(1000)) - discount.clone())
-        //                 - sum_revenue),
-        //     ]
-        // });
-
-        // orderby
-        // (1) revenue[i-1] >= revenue[i]
-        let config = LtEqGenericChip::configure(
-            meta,
-            |meta| meta.query_selector(q_sort[3]), // q_sort[1] should start from index 1
-            |meta| vec![meta.query_advice(orderby[3], Rotation::cur())], // revenue
-            |meta| vec![meta.query_advice(orderby[3], Rotation::prev())],
-        );
-        compare_condition.push(config.clone());
-
-        // revenue[i-1] = revenue[i]
-        let equal_v1 = IsZeroChip::configure(
-            meta,
-            |meta| meta.query_selector(q_sort[3]),
-            |meta| {
-                meta.query_advice(orderby[3], Rotation::prev())
-                    - meta.query_advice(orderby[3], Rotation::cur())
-            },
-            is_zero_advice_column[1],
-        );
-        equal_condition.push(equal_v1.clone());
-
-        // o_orderdate[i-1] <= o_orderdate[i]
-        let config_lt = LtEqGenericChip::configure(
-            meta,
-            |meta| meta.query_selector(q_sort[3]), // q_sort[2] should start from index 1
-            |meta| vec![meta.query_advice(orderby[0], Rotation::prev())],
-            |meta| vec![meta.query_advice(orderby[0], Rotation::cur())],
-        );
-        compare_condition.push(config_lt.clone());
-
-        meta.create_gate("verifies orderby scenarios", |meta| {
-            let q_sort = meta.query_selector(q_sort[3]);
+        // sum gate: sum(l_extendedprice * (1 - l_discount)) as revenue, note that revenue column starts by zero and its length is 1 more than others
+        meta.create_gate("accumulate constraint", |meta| {
+            let q_accu = meta.query_selector(q_accu);
+            let prev_revenue = meta.query_advice(revenue.clone(), Rotation::cur());
+            let extendedprice = meta.query_advice(groupby[3], Rotation::cur());
+            let discount = meta.query_advice(groupby[4], Rotation::cur());
+            let sum_revenue = meta.query_advice(revenue, Rotation::next());
+            let check = meta.query_advice(equal_check, Rotation::cur());
 
             vec![
-                q_sort.clone() *
-                (config.is_lt(meta, None) - Expression::Constant(F::ONE)) // or
-                        * (equal_v1.expr() * config_lt.is_lt(meta, None)
-                            - Expression::Constant(F::ONE)),
+                q_accu.clone()
+                    * (check.clone() * prev_revenue
+                        + extendedprice.clone()
+                            * (Expression::Constant(F::from(1000)) - discount.clone())
+                        - sum_revenue),
             ]
         });
+
+        // orderby
+
+        // // (1) revenue[i-1] > revenue[i]
+        // let config = LtEqVecChip::configure(
+        //     meta,
+        //     |meta| meta.query_selector(q_sort[3]), // q_sort[1] should start from index 1
+        //     |meta| vec![meta.query_advice(orderby[3], Rotation::next())], // revenue
+        //     |meta| vec![meta.query_advice(orderby[3], Rotation::cur())],
+        // );
+        // compare_condition.push(config.clone());
+
+        // // revenue[i-1] = revenue[i]
+        // let equal_v1 = IsZeroChip::configure(
+        //     meta,
+        //     |meta| meta.query_selector(q_sort[3]),
+        //     |meta| {
+        //         meta.query_advice(orderby[3], Rotation::cur())
+        //             - meta.query_advice(orderby[3], Rotation::next())
+        //     },
+        //     is_zero_advice_column[1],
+        // );
+        // equal_condition.push(equal_v1.clone());
+
+        // // o_orderdate[i-1] <= o_orderdate[i]
+        // let config_lt = LtEqVecChip::configure(
+        //     meta,
+        //     |meta| meta.query_selector(q_sort[3]), // q_sort[2] should start from index 1
+        //     |meta| vec![meta.query_advice(orderby[0], Rotation::cur())],
+        //     |meta| vec![meta.query_advice(orderby[0], Rotation::next())],
+        // );
+        // compare_condition.push(config_lt.clone());
+
+        // meta.create_gate("verifies orderby scenarios", |meta| {
+        //     let q_sort = meta.query_selector(q_sort[3]);
+
+        //     vec![
+        //         q_sort.clone() *
+        //         (config.is_lt(meta, None) - Expression::Constant(F::ONE)) // or
+        //                 * (equal_v1.expr() * config_lt.is_lt(meta, None)
+        //                     - Expression::Constant(F::ONE)),
+        //     ]
+        // });
 
         TestCircuitConfig {
             q_enable,
@@ -518,7 +491,6 @@ impl<F: Field + Ord> TestChip<F> {
             q_accu,
             customer,
             orders,
-            lineitem_old,
             lineitem,
 
             join_group,
@@ -568,13 +540,13 @@ impl<F: Field + Ord> TestChip<F> {
             equal_chip.push(chip);
         }
         for i in 0..self.config.compare_condition.len() {
-            let chip = LtEqGenericChip::construct(self.config.compare_condition[i].clone());
+            let chip = LtEqVecChip::construct(self.config.compare_condition[i].clone());
             chip.load(layouter)?;
             compare_chip.push(chip);
         }
 
         for i in 0..self.config.lt_compare_condition.len() {
-            let chip = LtChip::construct(self.config.lt_compare_condition[i].clone());
+            let chip = LtVecChip::construct(self.config.lt_compare_condition[i].clone());
             chip.load(layouter)?; // lt_compare_chip[0].load(layouter)?; // can we just load u8 range once?
             lt_compare_chip.push(chip);
         }
@@ -584,8 +556,7 @@ impl<F: Field + Ord> TestChip<F> {
         // witness local computation, note that the lcoal computation should not be put into layouter.assign_region()
         let start = Instant::now();
 
-        let mut l_check_1 = Vec::new(); // part 1 for lineitem_old
-        let mut l_check_2 = Vec::new(); // part 2 for lineitem_old
+        let mut l_check = Vec::new(); // t/f
         let mut o_check = Vec::new(); // t/f
         let mut c_check = Vec::new(); // 0, 1
 
@@ -604,20 +575,21 @@ impl<F: Field + Ord> TestChip<F> {
             }
         }
         for i in 0..lineitem.len() {
-            if i < 120000 {
-                if lineitem[i][3] > condition[1] {
-                    l_check_1.push(true);
-                } else {
-                    l_check_1.push(false);
-                }
+            if lineitem[i][3] > condition[1] {
+                l_check.push(true);
             } else {
-                if lineitem[i][3] > condition[1] {
-                    l_check_2.push(true);
-                } else {
-                    l_check_2.push(false);
-                }
+                l_check.push(false);
             }
         }
+
+        // compute values related to the join operation locally
+        // store the attribtues of the tables that will be used in the SQL query in tuples
+        // let mut c_combined = customer.clone();
+        // let mut o_combined = orders.clone();
+        // let mut l_combined = lineitem.clone();
+
+        let duration_block = start.elapsed();
+        println!("Time elapsed for block: {:?}", duration_block);
 
         let c_combined: Vec<Vec<_>> = customer
             .clone()
@@ -637,12 +609,12 @@ impl<F: Field + Ord> TestChip<F> {
             .filter(|row| row[3] > condition[1]) // r_name = ':3'
             .collect();
 
-        println! {"Lineitem: {:?}", c_combined.len()};
+        // println!{"Customer: {:?}", c_combined.len()};
 
         let mut combined = Vec::new();
         combined.push(c_combined); // its length is 2
         combined.push(o_combined); // 4
-        combined.push(l_combined.clone()); // 4
+        combined.push(l_combined); // 4
 
         let index = [
             (0, 1, 1, 2), //   c_custkey = o_custkey
@@ -734,12 +706,6 @@ impl<F: Field + Ord> TestChip<F> {
                 disjoin_value[3].push(val); // disjoin values
             }
         }
-        // orders +  customer + lineitem
-
-        // join 0: orders
-        // join 1: customer
-        // join 2: lineitem
-        // join 3: orders+ customer
 
         // locally compute the second join
         let mut to_add = Vec::new();
@@ -816,6 +782,7 @@ impl<F: Field + Ord> TestChip<F> {
         }
 
         let duration_block = start.elapsed();
+        println!("Time elapsed for block: {:?}", duration_block);
 
         // order by
         // revenue desc,
@@ -837,14 +804,65 @@ impl<F: Field + Ord> TestChip<F> {
             }
         }
         // println!("cartesian {:?}", cartesian_product);
+        // println!("grouped data {:?}", grouped_data);
 
         grouped_data.sort_by(|a, b| match b[3].cmp(&a[3]) {
             Ordering::Equal => a[1].cmp(&b[1]),
             other => other,
         });
-        // for i in 0..grouped_data.len() {
-        //     println!("grouped data {:?}", grouped_data[i][3]);
-        // }
+
+        // local lessthan computation assignment
+        let f_new_dedup_1: Vec<F> = new_dedup_1.clone().into_iter().map(F::from).collect();
+        let n1 = f_new_dedup_1.len();
+        let f_new_dedup_2: Vec<F> = new_dedup_2.clone().into_iter().map(F::from).collect();
+        let n2 = f_new_dedup_2.len();
+
+        // lessthan_or_equal
+
+        let n3 = cartesian_product.len();
+        let mut cartesian_left = Vec::new();
+        let mut cartesian_right = Vec::new();
+        for i in 0..n3 {
+            if i != 0 {
+                let mut new_vec: Vec<F> = Vec::new();
+                new_vec.push(From::from(cartesian_product[i][0]));
+                new_vec.push(From::from(cartesian_product[i][7]));
+                new_vec.push(From::from(cartesian_product[i][5]));
+                cartesian_right.push(new_vec);
+            }
+            if i != n3 - 1 {
+                let mut new_vec: Vec<F> = Vec::new();
+                new_vec.push(From::from(cartesian_product[i][0]));
+                new_vec.push(From::from(cartesian_product[i][7]));
+                new_vec.push(From::from(cartesian_product[i][5]));
+                cartesian_left.push(new_vec);
+            }
+        }
+
+        let n4 = grouped_data.len();
+        let mut grouped_left_revenue: Vec<Vec<F>> = Vec::new();
+        let mut grouped_right_revenue: Vec<Vec<F>> = Vec::new();
+        let mut grouped_left_orderdate: Vec<Vec<F>> = Vec::new();
+        let mut grouped_right_orderdate: Vec<Vec<F>> = Vec::new();
+
+        for i in 0..n4 {
+            if i != 0 {
+                let mut new_vec1 = Vec::new();
+                new_vec1.push(From::from(grouped_data[i][3].clone()));
+                grouped_left_revenue.push(new_vec1);
+                let mut new_vec2 = Vec::new();
+                new_vec2.push(From::from(grouped_data[i][0].clone()));
+                grouped_right_orderdate.push(new_vec2);
+            }
+            if i != n4 - 1 {
+                let mut new_vec1 = Vec::new();
+                new_vec1.push(From::from(grouped_data[i][3].clone()));
+                grouped_right_revenue.push(new_vec1);
+                let mut new_vec2 = Vec::new();
+                new_vec2.push(From::from(grouped_data[i][0].clone()));
+                grouped_left_orderdate.push(new_vec2);
+            }
+        }
 
         layouter.assign_region(
             || "witness",
@@ -910,64 +928,34 @@ impl<F: Field + Ord> TestChip<F> {
                     )?;
                 }
 
-                // lineitem_old, divide it into two parts
-                for i in 0..121000 {
-                    // note that the second part has more than 120000 records
+                // lineitem
+                for i in 0..lineitem.len() {
+                    self.config.q_enable[2].enable(&mut region, i)?;
+                    if l_check[i] == true {
+                        self.config.q_join[4].enable(&mut region, i)?; // used to select the valid rows for permutation
+                    }
+                    for j in 0..lineitem[0].len() {
+                        region.assign_advice(
+                            || "lineitem",
+                            self.config.lineitem[j],
+                            i,
+                            || Value::known(F::from(lineitem[i][j])),
+                        )?;
+                    }
+
+                    region.assign_advice(
+                        || "check2",
+                        self.config.check[2],
+                        i,
+                        || Value::known(F::from(l_check[i] as u64)),
+                    )?;
+
                     region.assign_advice(
                         || "condition2",
                         self.config.condition[2],
                         i,
                         || Value::known(F::from(condition[1])),
                     )?;
-                }
-                for i in 0..lineitem.len() {
-                    if i < 120000 {
-                        self.config.q_enable[2].enable(&mut region, i)?;
-                        for j in 0..lineitem[0].len() {
-                            region.assign_advice(
-                                || "lineitem",
-                                self.config.lineitem_old[0][j],
-                                i,
-                                || Value::known(F::from(lineitem[i][j])),
-                            )?;
-                        }
-                        region.assign_advice(
-                            || "check2",
-                            self.config.check[2],
-                            i,
-                            || Value::known(F::from(l_check_1[i] as u64)),
-                        )?;
-                    } else {
-                        self.config.q_enable[3].enable(&mut region, i - 120000)?;
-                        for j in 0..lineitem[0].len() {
-                            region.assign_advice(
-                                || "lineitem",
-                                self.config.lineitem_old[1][j],
-                                i - 120000,
-                                || Value::known(F::from(lineitem[i][j])),
-                            )?;
-                        }
-                        region.assign_advice(
-                            || "check2",
-                            self.config.check[3],
-                            i - 120000,
-                            || Value::known(F::from(l_check_2[i - 120000] as u64)),
-                        )?;
-                    }
-                }
-
-                // lineitem
-                for i in 0..l_combined.len() {
-                    self.config.q_join[4].enable(&mut region, i)?; // used to select the valid rows for permutation
-
-                    for j in 0..l_combined[0].len() {
-                        region.assign_advice(
-                            || "lineitem",
-                            self.config.lineitem[j],
-                            i,
-                            || Value::known(F::from(l_combined[i][j])),
-                        )?;
-                    }
                 }
 
                 for i in 0..join_value[0].len() {
@@ -989,7 +977,7 @@ impl<F: Field + Ord> TestChip<F> {
                     }
                 }
 
-                // assign join2 before the second join locally
+                //assign join2 before the second join locally
                 for i in 0..join_value[2].len() {
                     self.config.q_join[1].enable(&mut region, i)?; // join2
                     for j in 0..join_value[3].len() {
@@ -1198,7 +1186,7 @@ impl<F: Field + Ord> TestChip<F> {
 
                 // assign the new dedup
                 for i in 0..new_dedup_1.len() {
-                    if i > 0 {
+                    if i < new_dedup_1.len() - 1 {
                         self.config.q_sort[0].enable(&mut region, i)?; // start at index 1
                     }
                     region.assign_advice(
@@ -1210,7 +1198,7 @@ impl<F: Field + Ord> TestChip<F> {
                 }
                 // println!("new_dedup_2 {:?}", new_dedup_2.len());
                 for i in 0..new_dedup_2.len() {
-                    if i > 0 {
+                    if i < new_dedup_2.len() - 1 {
                         self.config.q_sort[1].enable(&mut region, i)?; // start at index 1
                     }
                     region.assign_advice(
@@ -1241,7 +1229,7 @@ impl<F: Field + Ord> TestChip<F> {
                 }
 
                 for i in 0..cartesian_product.len() {
-                    if i > 0 {
+                    if i < cartesian_product.len() - 1 {
                         self.config.q_sort[2].enable(&mut region, i)?; // q_sort[2]
                     }
                     for (idx, &j) in [0, 7, 5, 1, 2].iter().enumerate() {
@@ -1256,7 +1244,7 @@ impl<F: Field + Ord> TestChip<F> {
 
                 // println!("grouped data 1 {:?}", grouped_data.len());
                 for i in 0..grouped_data.len() {
-                    if i > 0 {
+                    if i < grouped_data.len() - 1 {
                         self.config.q_sort[3].enable(&mut region, i)?; // start at the index 1
                     }
                     for j in 0..4 {
@@ -1277,104 +1265,67 @@ impl<F: Field + Ord> TestChip<F> {
                         Value::known(F::from(customer[i][0]) - F::from(condition[0])),
                     )?; // c_mktsegment = ':1'
                 }
+                // for i in 0..grouped_data.len() {
+                //     if i < grouped_data.len() - 1 {
+                //         equal_chip[1].assign(
+                //             // iszerochip assignment
+                //             &mut region,
+                //             i,
+                //             Value::known(F::from(grouped_data[i][3] - grouped_data[i + 1][3])),
+                //         )?; // revenue[i-1] = revenue [i]
+                //     }
+                // }
 
-                for i in 0..orders.len() {
-                    lt_compare_chip[0].assign(
-                        &mut region,
-                        i,
-                        Value::known(F::from(orders[i][0])),
-                        Value::known(F::from(condition[1])),
-                    )?;
-                }
+                lt_compare_chip[0].assign_right_constant(
+                    &mut region,
+                    orders
+                        .iter()
+                        .filter_map(|row| row.get(0)) // Get the first element of the row, if it exists
+                        .map(|&element| F::from(element)) // Convert each element to type `F`
+                        .collect(),
+                    F::from(condition[1]),
+                )?;
 
-                for i in 0..lineitem.len() {
-                    if i < 120000 {
-                        lt_compare_chip[1].assign(
-                            &mut region,
-                            i,
-                            Value::known(F::from(condition[1])),
-                            Value::known(F::from(lineitem[i][3])),
-                        )?;
-                    } else {
-                        lt_compare_chip[2].assign(
-                            &mut region,
-                            i - 120000,
-                            Value::known(F::from(condition[1])),
-                            Value::known(F::from(lineitem[i][3])),
-                        )?;
-                    }
-                }
+                lt_compare_chip[1].assign_left_constant(
+                    &mut region,
+                    F::from(condition[1]),
+                    lineitem
+                        .iter()
+                        .filter_map(|row| row.get(3)) // Get the first element of the row, if it exists
+                        .map(|&element| F::from(element)) // Convert each element to type `F`
+                        .collect(),
+                )?;
 
-                for i in 0..new_dedup_1.len() {
-                    if i > 0 {
-                        lt_compare_chip[3].assign(
-                            // dedup_sort[][i-1] < dedup_sort[][i]
-                            &mut region,
-                            i,
-                            Value::known(F::from(new_dedup_1[i - 1])),
-                            Value::known(F::from(new_dedup_1[i])),
-                        )?;
-                    }
-                }
+                lt_compare_chip[2].assign(
+                    &mut region,
+                    f_new_dedup_1.clone()[0..n1 - 1].to_vec(),
+                    f_new_dedup_1.clone()[1..n1].to_vec(),
+                )?;
 
-                for i in 0..new_dedup_2.len() {
-                    if i > 0 {
-                        lt_compare_chip[4].assign(
-                            // dedup_sort[][i-1] < dedup_sort[][i]
-                            &mut region,
-                            i,
-                            Value::known(F::from(new_dedup_2[i - 1])),
-                            Value::known(F::from(new_dedup_2[i])),
-                        )?;
-                    }
-                }
+                lt_compare_chip[3].assign(
+                    &mut region,
+                    f_new_dedup_2.clone()[0..n2 - 1].to_vec(),
+                    f_new_dedup_2.clone()[1..n2].to_vec(),
+                )?;
 
-                for i in 0..cartesian_product.len() {
-                    if i > 0 {
-                        compare_chip[0].assign(
-                            &mut region,
-                            i, // assign groupby compare chip
-                            &[
-                                F::from(cartesian_product[i - 1][0]),
-                                F::from(cartesian_product[i - 1][7]),
-                                F::from(cartesian_product[i - 1][5]),
-                            ],
-                            &[
-                                F::from(cartesian_product[i][0]),
-                                F::from(cartesian_product[i][7]),
-                                F::from(cartesian_product[i][5]),
-                            ],
-                        )?;
-                    }
-                }
-                for i in 0..grouped_data.len() {
-                    if i > 0 {
-                        equal_chip[1].assign(
-                            // iszerochip assignment
-                            &mut region,
-                            i,
-                            Value::known(
-                                F::from(grouped_data[i - 1][3]) - F::from(grouped_data[i][3]),
-                            ),
-                        )?; // revenue[i-1] = revenue [i]
+                // compare_chip[0].assign(
+                //     &mut region,
+                //     cartesian_left.clone(),
+                //     cartesian_right.clone(),
+                // )?;
+                // compare_chip[1].assign(
+                //     &mut region,
+                //     grouped_left_revenue.clone(),
+                //     grouped_right_revenue.clone(),
+                // )?;
+                // compare_chip[2].assign(
+                //     &mut region,
+                //     grouped_left_orderdate.clone(),
+                //     grouped_right_orderdate.clone(),
+                // )?;
 
-                        compare_chip[1].assign(
-                            // revenue[i-1] > revenue[i]
-                            &mut region,
-                            i, // assign groupby compare chip
-                            &[F::from(grouped_data[i][3])],
-                            &[F::from(grouped_data[i - 1][3])],
-                        )?;
-
-                        compare_chip[2].assign(
-                            // o_orderdate[i-1] <= o_orderdate[i]
-                            &mut region,
-                            i,
-                            &[F::from(grouped_data[i - 1][0])],
-                            &[F::from(grouped_data[i][0])],
-                        )?;
-                    }
-                }
+                let duration_block = start.elapsed();
+                println!("Time elapsed for block: {:?}", duration_block);
 
                 let out = region.assign_advice(
                     || "orderby",
@@ -1501,7 +1452,7 @@ mod tests {
         // Time to generate parameters
         // let params_time_start = Instant::now();
         // let params: ParamsIPA<vesta::Affine> = ParamsIPA::new(k);
-        let params_path = "/home/cc/halo2-TPCH/src/sql/param17";
+        let params_path = "/home2/binbin/PoneglyphDB/src/proof/param16";
         // let mut fd = std::fs::File::create(&proof_path).unwrap();
         // params.write(&mut fd).unwrap();
         // println!("Time to generate params {:?}", params_time);
@@ -1561,7 +1512,7 @@ mod tests {
 
     #[test]
     fn test_1() {
-        let k = 17;
+        let k = 16;
 
         fn string_to_u64(s: &str) -> u64 {
             let mut result = 0;
@@ -1607,10 +1558,9 @@ mod tests {
         // let orders_file_path = "/Users/binbingu/halo2-TPCH/src/data/orders.tbl";
         // let lineitem_file_path = "/Users/binbingu/halo2-TPCH/src/data/lineitem.tbl";
 
-        // let customer_file_path = "/home/cc/halo2-TPCH/src/data/customer.tbl";
-        let customer_file_path = "/home/cc/halo2-TPCH/src/data/customer.tbl";
-        let orders_file_path = "/home/cc/halo2-TPCH/src/data/orders.tbl";
-        let lineitem_file_path = "/home/cc/halo2-TPCH/src/data/lineitem_240K.tbl";
+        let customer_file_path = "/home2/binbin/PoneglyphDB/src/data/customer.tbl";
+        let orders_file_path = "/home2/binbin/PoneglyphDB/src/data/orders.tbl";
+        let lineitem_file_path = "/home2/binbin/PoneglyphDB/src/data/lineitem.tbl";
 
         let mut customer: Vec<Vec<u64>> = Vec::new();
         let mut orders: Vec<Vec<u64>> = Vec::new();
@@ -1629,8 +1579,8 @@ mod tests {
                 .iter()
                 .map(|record| {
                     vec![
-                        date_to_timestamp(&record.o_orderdate),
-                        // compact_date_representation(&record.o_orderdate, 1980),
+                        // date_to_timestamp(&record.o_orderdate),
+                        compact_date_representation(&record.o_orderdate, 1980),
                         record.o_shippriority,
                         record.o_custkey,
                         record.o_orderkey,
@@ -1648,18 +1598,18 @@ mod tests {
                         scale_by_1000(record.l_extendedprice),
                         scale_by_1000(record.l_discount),
                         // Fp::from(string_to_u64(&record.l_shipdate)),
-                        date_to_timestamp(&record.l_shipdate),
-                        // compact_date_representation(&record.l_shipdate, 1980),
+                        // date_to_timestamp(&record.l_shipdate),
+                        compact_date_representation(&record.l_shipdate, 1980),
                     ]
                 })
                 .collect();
         }
 
-        // let condition = [
-        //     string_to_u64("HOUSEHOLD"),
-        //     compact_date_representation("1995-03-25", 1980),
-        // ];
-        let condition = [string_to_u64("HOUSEHOLD"), date_to_timestamp("1995-03-25")];
+        let condition = [
+            string_to_u64("HOUSEHOLD"),
+            compact_date_representation("1995-03-25", 1980),
+        ];
+        // let condition = [string_to_u64("HOUSEHOLD"), date_to_timestamp("1995-03-25")];
 
         // c_mktsegment = 'HOUSEHOLD'   -> 3367
         // o_orderdate < date '1995-03-25'and l_shipdate > date '1995-03-25'  ->796089600
@@ -1667,7 +1617,7 @@ mod tests {
 
         // let customer: Vec<Vec<u64>> = customer.iter().take(100).cloned().collect();
         // let orders: Vec<Vec<u64>> = orders.iter().take(100).cloned().collect();
-        // let lineitem: Vec<Vec<u64>> = lineitem.iter().take(1000).cloned().collect();
+        let lineitem: Vec<Vec<u64>> = lineitem.iter().take(100).cloned().collect();
 
         let circuit = MyCircuit::<Fp> {
             customer,
@@ -1686,7 +1636,7 @@ mod tests {
             let prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
             prover.assert_satisfied();
         } else {
-            let proof_path = "/home/cc/halo2-TPCH/src/sql/proof_q3_240K";
+            let proof_path = "/home2/binbin/PoneglyphDB/src/proof/proof_q3_v1";
             generate_and_verify_proof(k, circuit, &public_input, proof_path);
         }
 

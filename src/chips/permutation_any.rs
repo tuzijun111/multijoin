@@ -5,14 +5,6 @@ use halo2_proofs::arithmetic::Field;
 // use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::{circuit::*, plonk::*, poly::Rotation};
 
-// take an value in the `input` advice column
-// the goal is to check whether the value is less than target
-// table is the instance column that contains all the values from 0 to (instance-1)
-// advice_table gets dynamically filled with the values from table
-// The chip checks that the input value is less than the target value
-// This gets done by performing a lookup between the input value and the advice_table
-// pub trait Field: PrimeField<Repr = [u8; 32]> {}
-
 // impl<F> Field for F where F: PrimeField<Repr = [u8; 32]> {}
 #[derive(Debug, Clone)]
 
@@ -89,11 +81,10 @@ impl<'a, F: Field> PermAnyChip<F> {
     }
 
     pub fn assign1(
-        // regular one
         &self,
         region: &mut Region<'_, F>,
-        input: Vec<Vec<F>>,
-        table: Vec<Vec<F>>,
+        input: &[Vec<F>],
+        table: &[Vec<F>],
     ) -> Result<(), Error> {
         for i in 0..input.len() {
             for j in 0..input[0].len() {
@@ -121,12 +112,11 @@ impl<'a, F: Field> PermAnyChip<F> {
     }
 
     pub fn assign2(
-        // for two input columns and one table column
         &self,
         region: &mut Region<'_, F>,
-        input1: Vec<Vec<F>>,
-        input2: Vec<Vec<F>>,
-        table: Vec<Vec<F>>,
+        input1: &[Vec<F>],
+        input2: &[Vec<F>],
+        table: &[Vec<F>],
     ) -> Result<(), Error> {
         for i in 0..input1.len() {
             for j in 0..input1[0].len() {
@@ -151,7 +141,7 @@ impl<'a, F: Field> PermAnyChip<F> {
         }
 
         for i in 0..table.len() {
-            for j in 0..input1[0].len() {
+            for j in 0..table[0].len() {
                 region.assign_advice(
                     || "table",
                     self.config.table[j],

@@ -1476,13 +1476,6 @@ mod tests {
         let nation_file_path = "/home2/binbin/PoneglyphDB/src/data/nation.tbl";
         let region_file_path = "/home2/binbin/PoneglyphDB/src/data/region.cvs";
 
-        // customer rows: 1500
-        // orders rows:   15000
-        // lineitem rows: 60175
-        // supplier rows: 100
-        // nation rows:   25
-        // region rows:   5
-
         let mut customer: Vec<Vec<u64>> = Vec::new();
         let mut orders: Vec<Vec<u64>> = Vec::new();
         let mut lineitem: Vec<Vec<u64>> = Vec::new();

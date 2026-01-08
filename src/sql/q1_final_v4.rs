@@ -14,8 +14,6 @@ use std::time::Instant;
 
 const NUM_BYTES: usize = 5;
 
-
-
 // #[derive(Default)]
 // We should use the selector to skip the row which does not satisfy shipdate values
 pub trait Field: PrimeField<Repr = [u8; 32]> {}
@@ -634,7 +632,7 @@ mod tests {
         // Time to generate parameters
         // let params_time_start = Instant::now();
         // let params: ParamsIPA<vesta::Affine> = ParamsIPA::new(k);
-        let params_path = "/home/cc/halo2-TPCH/src/sql/param16";
+        let params_path = "/home2/binbin/PoneglyphDB/src/sql/param16";
         // let mut fd = std::fs::File::create(&params_path).unwrap();
         // params.write(&mut fd).unwrap();
         // println!("Time to generate params {:?}", params_time_start.elapsed());
@@ -720,7 +718,7 @@ mod tests {
         }
         let mut lineitem: Vec<Vec<Fp>> = Vec::new();
 
-        let lineitem_file_path = "/home/cc/halo2-TPCH/src/data/lineitem.tbl";
+        let lineitem_file_path = "/home2/binbin/PoneglyphDB/src/data/lineitem.tbl";
 
         if let Ok(records) = data_processing::lineitem_read_records_from_file(lineitem_file_path) {
             // Convert the Vec<Region> to a 2D vector
@@ -741,7 +739,7 @@ mod tests {
                 .collect();
         }
 
-        // let lineitem_file_path = "/home/cc/halo2-TPCH/src/data/lineitem_120K.tbl";
+        // let lineitem_file_path = "/home2/binbin/PoneglyphDB/src/data/lineitem_120K.tbl";
         // if let Ok(records) = data_processing::lineitem_read_records_from_file(lineitem_file_path) {
         //     // Convert the Vec<Region> to a 2D vector
         //     lineitem = records
@@ -761,7 +759,7 @@ mod tests {
         //         .collect();
         // }
 
-        // let lineitem_file_path = "/home/cc/halo2-TPCH/src/data/lineitem_240K.tbl";
+        // let lineitem_file_path = "/home2/binbin/PoneglyphDB/src/data/lineitem_240K.tbl";
         // if let Ok(records) = data_processing::lineitem_read_records_from_file(lineitem_file_path) {
         //     // Convert the Vec<Region> to a 2D vector
         //     lineitem = records
@@ -804,7 +802,7 @@ mod tests {
             let prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
             prover.assert_satisfied();
         } else {
-            let proof_path = "/home/cc/halo2-TPCH/src/sql/proof_q1";
+            let proof_path = "/home2/binbin/PoneglyphDB/src/sql/proof_q1";
             generate_and_verify_proof(k, circuit, &public_input, proof_path);
         }
     }

@@ -3,12 +3,12 @@
 use halo2_proofs::{halo2curves::ff::PrimeField, plonk::Expression};
 
 use crate::chips::is_zero::{IsZeroChip, IsZeroConfig};
-use crate::chips::less_than_vector::{LtVecChip, LtVecConfig, LtVecInstruction};
-use crate::chips::lessthan_or_equal_vector::{LtEqVecChip, LtEqVecConfig, LtEqVecInstruction};
-// use crate::chips::less_than::{LtChip, LtConfig, LtInstruction};
-// use crate::chips::lessthan_or_equal_generic::{
-//     LtEqGenericChip, LtEqGenericConfig, LtEqGenericInstruction,
-// };
+// use crate::chips::less_than_vector::{LtVecChip, LtVecConfig, LtVecInstruction};
+// use crate::chips::lessthan_or_equal_vector::{LtEqVecChip, LtEqVecConfig, LtEqVecInstruction};
+use crate::chips::less_than::{LtChip, LtConfig, LtInstruction};
+use crate::chips::lessthan_or_equal_generic::{
+    LtEqGenericChip, LtEqGenericConfig, LtEqGenericInstruction,
+};
 use crate::chips::permutation_any::{PermAnyChip, PermAnyConfig};
 
 use std::thread::sleep;
@@ -23,14 +23,13 @@ use std::mem;
 use std::process;
 use std::time::Instant;
 
-const NUM_BYTES: usize = 4;
+const NUM_BYTES: usize = 5;
 
 pub trait Field: PrimeField<Repr = [u8; 32]> {}
 
 impl<F> Field for F where F: PrimeField<Repr = [u8; 32]> {}
 
 // #[derive(Default)]
-// We should use the selector to skip the row which does not satisfy shipdate values
 
 #[derive(Clone, Debug)]
 pub struct TestCircuitConfig<F: Field + Ord> {
@@ -41,7 +40,10 @@ pub struct TestCircuitConfig<F: Field + Ord> {
     q_accu: Selector,
     customer: Vec<Column<Advice>>, // c_mkt, c_custkey
     orders: Vec<Column<Advice>>,   // o_orderdate, o_shippri, o_custkey, o_orderkey
-    lineitem: Vec<Column<Advice>>, // l_orderkey, l_extened, l_dis, l_ship
+
+    // We REMOVE lineitem_old. The single `lineitem` table stores the filtered rows (l_combined),
+    // and we enforce the l_shipdate predicate on those rows.
+    lineitem: Vec<Column<Advice>>, // l_orderkey, l_extended, l_dis, l_ship
 
     join_group: Vec<Vec<Column<Advice>>>,
     disjoin_group: Vec<Vec<Column<Advice>>>,
@@ -61,10 +63,11 @@ pub struct TestCircuitConfig<F: Field + Ord> {
     // // cartesian: Vec<Column<Advice>>,
     equal_check: Column<Advice>, // check if sorted_revenue[i-1] = sorted_revenue[i]
     revenue: Column<Advice>,
-    // lt_compare_condition: Vec<LtConfig<F, NUM_BYTES>>,
-    lt_compare_condition: Vec<LtVecConfig<F, NUM_BYTES>>,
+    lt_compare_condition: Vec<LtConfig<F, NUM_BYTES>>,
+    // lt_compare_condition: Vec<LtVecConfig<F, NUM_BYTES>>,
     equal_condition: Vec<IsZeroConfig<F>>,
-    compare_condition: Vec<LtEqVecConfig<F, NUM_BYTES>>,
+    // compare_condition: Vec<LtEqVecConfig<F, NUM_BYTES>>,
+    compare_condition: Vec<LtEqGenericConfig<F, NUM_BYTES>>,
     // perm: Vec<PermAnyConfig>,
     instance: Column<Instance>,
     instance_test: Column<Advice>,
@@ -87,18 +90,14 @@ impl<F: Field + Ord> TestChip<F> {
         meta.enable_equality(instance);
         let instance_test = meta.advice_column();
         meta.enable_equality(instance_test);
-        // let instance_test1 = meta.advice_column();
-        // meta.enable_equality(instance_test1);
-        // let instance_test2 = meta.advice_column();
-        // meta.enable_equality(instance_test2);
 
         let mut q_enable = Vec::new();
-        for i_ in 0..3 {
+        for _ in 0..4 {
             q_enable.push(meta.selector());
         }
 
         let mut q_sort = Vec::new();
-        for i_ in 0..4 {
+        for _ in 0..4 {
             q_sort.push(meta.selector());
         }
 
@@ -110,7 +109,7 @@ impl<F: Field + Ord> TestChip<F> {
                 q_join.push(meta.complex_selector());
             }
         }
-        for i_ in 0..5 {
+        for _ in 0..5 {
             q_sort.push(meta.selector());
         }
 
@@ -127,11 +126,13 @@ impl<F: Field + Ord> TestChip<F> {
             orders.push(meta.advice_column());
             lineitem.push(meta.advice_column());
         }
+
         let mut condition = Vec::new();
         for _ in 0..3 {
             // use meta.equality() for copying check, so we do not need three conditions here
             condition.push(meta.advice_column());
         }
+        meta.enable_equality(condition[2]);
 
         let mut deduplicate = Vec::new();
         let mut deduplicate_helper = Vec::new();
@@ -198,34 +199,9 @@ impl<F: Field + Ord> TestChip<F> {
         }
 
         let mut check = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..4 {
             check.push(meta.advice_column());
         }
-        // // equality
-        // for i in 0..2 {
-        //     meta.enable_equality(deduplicate_helper[i]);
-        //     meta.enable_equality(dedup_sort[i]);
-        // }
-        // for i in 0..4 {
-        //     // meta.enable_equality(deduplicate[i]);
-        //     meta.enable_equality(orderby[i]);
-        // }
-
-        // the following two parts are also expensive and should be optimized
-        // for vec in join_group.iter().chain(disjoin_group.iter()) {
-        //     for &element in vec.iter() {
-        //         meta.enable_equality(element);
-        //     }
-        // }
-
-        // for vec in perm_helper.iter() {
-        //     for &element in vec.iter() {
-        //         meta.enable_equality(element);
-        //     }
-        // }
-
-        // meta.enable_equality(equal_check);
-        // meta.enable_equality(revenue);
 
         // // c_mktsegment = ':1'
         let mut equal_condition = Vec::new();
@@ -244,48 +220,42 @@ impl<F: Field + Ord> TestChip<F> {
             let s = meta.query_selector(q_enable[0]);
             let output = meta.query_advice(check[0], Rotation::cur());
             vec![
-                s.clone() * (config.expr() * (output.clone() - Expression::Constant(F::ONE))), // in this case output == 1
-                s * (Expression::Constant(F::ONE) - config.expr()) * (output), // in this case output == 0
+                s.clone() * (config.expr() * (output.clone() - Expression::Constant(F::ONE))), // output == 1
+                s * (Expression::Constant(F::ONE) - config.expr()) * (output), // output == 0
             ]
         });
 
         let mut lt_compare_condition = Vec::new();
         // o_orderdate < date ':2'
-        let config = LtVecChip::configure(
+        let config = LtChip::configure(
             meta,
             |meta| meta.query_selector(q_enable[1]),
             |meta| meta.query_advice(orders[0], Rotation::cur()),
-            |meta| meta.query_advice(condition[1], Rotation::cur()), // we put the left and right value at the first two positions of value_l
+            |meta| meta.query_advice(condition[1], Rotation::cur()),
         );
 
-        meta.create_gate(
-            "verifies o_orderdate < date ':2'", // just use less_than for testing here
-            |meta| {
-                let q_enable = meta.query_selector(q_enable[1]);
-                let check = meta.query_advice(check[1], Rotation::cur());
-                // vec![q_enable * (config.is_lt(meta, None) - check)]
-                vec![q_enable.clone() * (config.is_lt(meta, None) - check)]
-            },
-        );
+        meta.create_gate("verifies o_orderdate < date ':2'", |meta| {
+            let q_enable = meta.query_selector(q_enable[1]);
+            let check = meta.query_advice(check[1], Rotation::cur());
+            vec![q_enable.clone() * (config.is_lt(meta, None) - check)]
+        });
 
         lt_compare_condition.push(config);
 
-        // l_shipdate > date ':2'
-        let config: LtVecConfig<F, NUM_BYTES> = LtVecChip::configure(
+        // l_shipdate > date ':2'  (NO SPLIT, and we check it on the filtered lineitem table)
+        // We encode "condition[2] < l_shipdate" using LtChip.
+        let config: LtConfig<F, NUM_BYTES> = LtChip::configure(
             meta,
             |meta| meta.query_selector(q_enable[2]),
             |meta| meta.query_advice(condition[2], Rotation::cur()),
-            |meta| meta.query_advice(lineitem[3], Rotation::cur()), // we put the left and right value at the first two positions of value_l
+            |meta| meta.query_advice(lineitem[3], Rotation::cur()),
         );
 
-        meta.create_gate(
-            "verifies l_shipdate > date ':2'", // just use less_than for testing here
-            |meta| {
-                let q_enable = meta.query_selector(q_enable[2]);
-                let check = meta.query_advice(check[2], Rotation::cur());
-                vec![q_enable * (config.is_lt(meta, None) - check)]
-            },
-        );
+        meta.create_gate("verifies l_shipdate > date ':2'", |meta| {
+            let q_enable = meta.query_selector(q_enable[2]);
+            let check = meta.query_advice(check[2], Rotation::cur());
+            vec![q_enable * (config.is_lt(meta, None) - check)]
+        });
         lt_compare_condition.push(config);
 
         // disjoin sort check
@@ -308,8 +278,7 @@ impl<F: Field + Ord> TestChip<F> {
             });
         }
 
-        // two permutation check: join and disjoin
-
+        // three permutation checks: orders, customer, lineitem(filtered)
         PermAnyChip::configure(
             meta,
             q_join[2],
@@ -317,6 +286,7 @@ impl<F: Field + Ord> TestChip<F> {
             orders.clone(),
             perm_helper[0].clone(),
         );
+
         PermAnyChip::configure(
             meta,
             q_join[3],
@@ -334,59 +304,52 @@ impl<F: Field + Ord> TestChip<F> {
         );
 
         // two dedup permutation check: deduplicate and dedup_sort
-        meta.lookup_any("dedup permtuation check", |meta| {
+        meta.lookup_any("dedup permutation check", |meta| {
             let input = meta.query_advice(deduplicate_helper[0], Rotation::cur());
             let table = meta.query_advice(dedup_sort[0], Rotation::cur());
             vec![(input, table)]
         });
-        meta.lookup_any("dedup permtuation check", |meta| {
+        meta.lookup_any("dedup permutation check", |meta| {
             let input = meta.query_advice(deduplicate_helper[1], Rotation::cur());
             let table = meta.query_advice(dedup_sort[1], Rotation::cur());
             vec![(input, table)]
         });
 
         // join1 check
-        meta.create_gate(
-            "verify join1 values match'", // just use less_than for testing here
-            |meta| {
-                let q = meta.query_selector(q_join[0]);
-                let p1 = meta.query_advice(join_group[0][2], Rotation::cur());
-                let p2 = meta.query_advice(join1[1], Rotation::cur());
-                vec![q * (p1 - p2)]
-            },
-        );
+        meta.create_gate("verify join1 values match'", |meta| {
+            let q = meta.query_selector(q_join[0]);
+            let p1 = meta.query_advice(join_group[0][2], Rotation::cur());
+            let p2 = meta.query_advice(join1[1], Rotation::cur());
+            vec![q * (p1 - p2)]
+        });
 
         // all values of join1 are in join_group[1]
         meta.lookup_any("check join1", |meta| {
-            let inputs: Vec<_> = join_group[1] // join1
+            let inputs: Vec<_> = join_group[1]
                 .iter()
                 .map(|&idx| meta.query_advice(idx, Rotation::cur()))
                 .collect();
 
-            let tables: Vec<_> = join1 //join_group[1]
+            let tables: Vec<_> = join1
                 .iter()
                 .map(|&idx| meta.query_advice(idx, Rotation::cur()))
                 .collect();
 
-            let constraints: Vec<_> = inputs
+            inputs
                 .iter()
                 .zip(tables.iter())
                 .map(|(input, table)| (input.clone(), table.clone()))
-                .collect();
-
-            constraints
+                .collect()
         });
 
         // join2 check
-        meta.create_gate(
-            "verify join2 values match'", // just use less_than for testing here
-            |meta| {
-                let q = meta.query_selector(q_join[1]);
-                let p1 = meta.query_advice(join_group[2][0], Rotation::cur());
-                let p2 = meta.query_advice(join2[3], Rotation::cur());
-                vec![q * (p1 - p2)]
-            },
-        );
+        meta.create_gate("verify join2 values match'", |meta| {
+            let q = meta.query_selector(q_join[1]);
+            let p1 = meta.query_advice(join_group[2][0], Rotation::cur());
+            let p2 = meta.query_advice(join2[3], Rotation::cur());
+            vec![q * (p1 - p2)]
+        });
+
         meta.lookup_any("check join2", |meta| {
             let inputs: Vec<_> = join2
                 .iter()
@@ -398,22 +361,20 @@ impl<F: Field + Ord> TestChip<F> {
                 .map(|&idx| meta.query_advice(idx, Rotation::cur()))
                 .collect();
 
-            let constraints: Vec<_> = inputs
+            inputs
                 .iter()
                 .zip(tables.iter())
                 .map(|(input, table)| (input.clone(), table.clone()))
-                .collect();
-
-            constraints
+                .collect()
         });
 
         // two dedup sort check
         for i in 0..2 {
-            let config = LtVecChip::configure(
+            let config = LtChip::configure(
                 meta,
                 |meta| meta.query_selector(q_sort[i]),
+                |meta| meta.query_advice(dedup_sort[i], Rotation::prev()),
                 |meta| meta.query_advice(dedup_sort[i], Rotation::cur()),
-                |meta| meta.query_advice(dedup_sort[i], Rotation::next()), // we put the left and right value at the first two positions of value_l
             );
             lt_compare_condition.push(config.clone());
             meta.create_gate("t[i-1]<t[i]'", |meta| {
@@ -422,166 +383,127 @@ impl<F: Field + Ord> TestChip<F> {
             });
         }
 
-        // // join check
-
-        // // group by
+        // group by compare (lexicographic <=)
         let mut compare_condition = Vec::new();
-        // let config = LtEqVecChip::configure(
-        //     meta,
-        //     |meta| meta.query_selector(q_sort[2]),
-        //     |meta| {
-        //         vec![
-        //             meta.query_advice(groupby[0], Rotation::cur()),
-        //             meta.query_advice(groupby[1], Rotation::cur()),
-        //             meta.query_advice(groupby[2], Rotation::cur()),
-        //         ]
-        //     },
-        //     |meta| {
-        //         vec![
-        //             meta.query_advice(groupby[0], Rotation::next()),
-        //             meta.query_advice(groupby[1], Rotation::next()),
-        //             meta.query_advice(groupby[2], Rotation::next()),
-        //         ]
-        //     },
-        // );
-        // compare_condition.push(config);
+        let config = LtEqGenericChip::configure(
+            meta,
+            |meta| meta.query_selector(q_sort[2]),
+            |meta| {
+                vec![
+                    meta.query_advice(groupby[0], Rotation::prev()),
+                    meta.query_advice(groupby[1], Rotation::prev()),
+                    meta.query_advice(groupby[2], Rotation::prev()),
+                ]
+            },
+            |meta| {
+                vec![
+                    meta.query_advice(groupby[0], Rotation::cur()),
+                    meta.query_advice(groupby[1], Rotation::cur()),
+                    meta.query_advice(groupby[2], Rotation::cur()),
+                ]
+            },
+        );
+        compare_condition.push(config);
 
-        // sum gate: sum(l_extendedprice * (1 - l_discount)) as revenue, note that revenue column starts by zero and its length is 1 more than others
-        meta.create_gate("accumulate constraint", |meta| {
-            let q_accu = meta.query_selector(q_accu);
-            let prev_revenue = meta.query_advice(revenue.clone(), Rotation::cur());
-            let extendedprice = meta.query_advice(groupby[3], Rotation::cur());
-            let discount = meta.query_advice(groupby[4], Rotation::cur());
-            let sum_revenue = meta.query_advice(revenue, Rotation::next());
-            let check = meta.query_advice(equal_check, Rotation::cur());
+        // orderby: revenue desc, o_orderdate asc
+        let config = LtEqGenericChip::configure(
+            meta,
+            |meta| meta.query_selector(q_sort[3]),
+            |meta| vec![meta.query_advice(orderby[3], Rotation::cur())], // revenue cur
+            |meta| vec![meta.query_advice(orderby[3], Rotation::prev())], // revenue prev
+        );
+        compare_condition.push(config.clone());
 
+        let equal_v1 = IsZeroChip::configure(
+            meta,
+            |meta| meta.query_selector(q_sort[3]),
+            |meta| {
+                meta.query_advice(orderby[3], Rotation::prev())
+                    - meta.query_advice(orderby[3], Rotation::cur())
+            },
+            is_zero_advice_column[1],
+        );
+        equal_condition.push(equal_v1.clone());
+
+        let config_lt = LtEqGenericChip::configure(
+            meta,
+            |meta| meta.query_selector(q_sort[3]),
+            |meta| vec![meta.query_advice(orderby[0], Rotation::prev())], // o_orderdate prev
+            |meta| vec![meta.query_advice(orderby[0], Rotation::cur())],  // o_orderdate cur
+        );
+        compare_condition.push(config_lt.clone());
+
+        meta.create_gate("verifies orderby scenarios", |meta| {
+            let q_sort = meta.query_selector(q_sort[3]);
             vec![
-                q_accu.clone()
-                    * (check.clone() * prev_revenue
-                        + extendedprice.clone()
-                            * (Expression::Constant(F::from(1000)) - discount.clone())
-                        - sum_revenue),
+                q_sort.clone()
+                    * (config.is_lt(meta, None) - Expression::Constant(F::ONE))
+                    * (equal_v1.expr() * config_lt.is_lt(meta, None)
+                        - Expression::Constant(F::ONE)),
             ]
         });
-
-        // orderby
-
-        // // (1) revenue[i-1] > revenue[i]
-        // let config = LtEqVecChip::configure(
-        //     meta,
-        //     |meta| meta.query_selector(q_sort[3]), // q_sort[1] should start from index 1
-        //     |meta| vec![meta.query_advice(orderby[3], Rotation::next())], // revenue
-        //     |meta| vec![meta.query_advice(orderby[3], Rotation::cur())],
-        // );
-        // compare_condition.push(config.clone());
-
-        // // revenue[i-1] = revenue[i]
-        // let equal_v1 = IsZeroChip::configure(
-        //     meta,
-        //     |meta| meta.query_selector(q_sort[3]),
-        //     |meta| {
-        //         meta.query_advice(orderby[3], Rotation::cur())
-        //             - meta.query_advice(orderby[3], Rotation::next())
-        //     },
-        //     is_zero_advice_column[1],
-        // );
-        // equal_condition.push(equal_v1.clone());
-
-        // // o_orderdate[i-1] <= o_orderdate[i]
-        // let config_lt = LtEqVecChip::configure(
-        //     meta,
-        //     |meta| meta.query_selector(q_sort[3]), // q_sort[2] should start from index 1
-        //     |meta| vec![meta.query_advice(orderby[0], Rotation::cur())],
-        //     |meta| vec![meta.query_advice(orderby[0], Rotation::next())],
-        // );
-        // compare_condition.push(config_lt.clone());
-
-        // meta.create_gate("verifies orderby scenarios", |meta| {
-        //     let q_sort = meta.query_selector(q_sort[3]);
-
-        //     vec![
-        //         q_sort.clone() *
-        //         (config.is_lt(meta, None) - Expression::Constant(F::ONE)) // or
-        //                 * (equal_v1.expr() * config_lt.is_lt(meta, None)
-        //                     - Expression::Constant(F::ONE)),
-        //     ]
-        // });
 
         TestCircuitConfig {
             q_enable,
             q_join,
-            // q_dedup,
-            // q_perm,
             q_sort,
             q_accu,
             customer,
             orders,
             lineitem,
-
             join_group,
             disjoin_group,
+            perm_helper,
             check,
             deduplicate,
             deduplicate_helper,
             dedup_sort,
-
             condition,
             join1,
             join2,
             groupby,
             orderby,
             equal_check,
-
             revenue,
             lt_compare_condition,
             equal_condition,
             compare_condition,
-            perm_helper,
             instance,
             instance_test,
-            // instance_test1,
-            // instance_test2,
         }
     }
 
     pub fn assign(
         &self,
-        // layouter: &mut impl Layouter<F>,
         layouter: &mut impl Layouter<F>,
-
         customer: Vec<Vec<u64>>,
         orders: Vec<Vec<u64>>,
         lineitem: Vec<Vec<u64>>,
-
         condition: [u64; 2],
     ) -> Result<AssignedCell<F, F>, Error> {
         let mut equal_chip = Vec::new();
         let mut compare_chip = Vec::new();
         let mut lt_compare_chip = Vec::new();
-        // // let mut perm_chip: Vec<PermAnyChip<_>> = Vec::new();
 
         for i in 0..self.config.equal_condition.len() {
             let chip = IsZeroChip::construct(self.config.equal_condition[i].clone());
             equal_chip.push(chip);
         }
         for i in 0..self.config.compare_condition.len() {
-            let chip = LtEqVecChip::construct(self.config.compare_condition[i].clone());
+            let chip = LtEqGenericChip::construct(self.config.compare_condition[i].clone());
             chip.load(layouter)?;
             compare_chip.push(chip);
         }
 
         for i in 0..self.config.lt_compare_condition.len() {
-            let chip = LtVecChip::construct(self.config.lt_compare_condition[i].clone());
-            chip.load(layouter)?; // lt_compare_chip[0].load(layouter)?; // can we just load u8 range once?
+            let chip = LtChip::construct(self.config.lt_compare_condition[i].clone());
+            chip.load(layouter)?;
             lt_compare_chip.push(chip);
         }
 
-        // println!("lt compare {:?}", self.config.lt_compare_condition.len());
-
-        // witness local computation, note that the lcoal computation should not be put into layouter.assign_region()
+        // witness local computation
         let start = Instant::now();
 
-        let mut l_check = Vec::new(); // t/f
         let mut o_check = Vec::new(); // t/f
         let mut c_check = Vec::new(); // 0, 1
 
@@ -599,61 +521,44 @@ impl<F: Field + Ord> TestChip<F> {
                 o_check.push(false);
             }
         }
-        for i in 0..lineitem.len() {
-            if lineitem[i][3] > condition[1] {
-                l_check.push(true);
-            } else {
-                l_check.push(false);
-            }
-        }
 
-        // compute values related to the join operation locally
-        // store the attribtues of the tables that will be used in the SQL query in tuples
-        // let mut c_combined = customer.clone();
-        // let mut o_combined = orders.clone();
-        // let mut l_combined = lineitem.clone();
-
-        let duration_block = start.elapsed();
-        println!("Time elapsed for block: {:?}", duration_block);
-
+        // filtered tables (these are what the circuit uses downstream)
         let c_combined: Vec<Vec<_>> = customer
             .clone()
             .into_iter()
-            .filter(|row| row[0] == condition[0]) // r_name = ':3'
+            .filter(|row| row[0] == condition[0])
             .collect();
 
         let o_combined: Vec<Vec<_>> = orders
             .clone()
             .into_iter()
-            .filter(|row| row[0] < condition[1]) // r_name = ':3'
+            .filter(|row| row[0] < condition[1])
             .collect();
 
         let l_combined: Vec<Vec<_>> = lineitem
             .clone()
             .into_iter()
-            .filter(|row| row[3] > condition[1]) // r_name = ':3'
+            .filter(|row| row[3] > condition[1])
             .collect();
 
-        // println!{"Customer: {:?}", c_combined.len()};
+        // IMPORTANT: since we removed lineitem_old, we only check the predicate on l_combined rows.
+        let l_check: Vec<bool> = l_combined.iter().map(|row| row[3] > condition[1]).collect();
+
+        println! {"Lineitem: {:?}", c_combined.len()};
 
         let mut combined = Vec::new();
-        combined.push(c_combined); // its length is 2
-        combined.push(o_combined); // 4
-        combined.push(l_combined); // 4
+        combined.push(c_combined); // 2 cols
+        combined.push(o_combined); // 4 cols
+        combined.push(l_combined.clone()); // 4 cols
 
         let index = [
-            (0, 1, 1, 2), //   c_custkey = o_custkey
-            (1, 2, 3, 0), //   l_orderkey = o_orderkey
+            (0, 1, 1, 2), // c_custkey = o_custkey
+            (1, 2, 3, 0), // l_orderkey = o_orderkey
         ];
 
-        // for i in 0..join_value.len(){
-        //     println!{"Join Value: {:?}", join_value[i].len()};
-        // }
-
-        // compute final table by applying all joins
         let join_index = [
-            (0, 1, 1, 2),     //   c_custkey = o_custkey
-            (1, 2, 2 + 3, 0), //   l_orderkey = o_orderkey
+            (0, 1, 1, 2),     // c_custkey = o_custkey
+            (1, 2, 2 + 3, 0), // l_orderkey = o_orderkey (offset into joined row)
         ];
 
         let mut join_value: Vec<Vec<_>> = vec![vec![]; 4];
@@ -667,25 +572,23 @@ impl<F: Field + Ord> TestChip<F> {
         }
 
         for val in &combined[1] {
-            // Check if the element exists in the map (thus in combined[0])
             if map.contains_key(&val[index[0].3]) {
-                join_value[0].push(val.clone()); // join values
+                join_value[0].push(val.clone());
             } else {
-                disjoin_value[0].push(val); // disjoin values
+                disjoin_value[0].push(val);
             }
         }
-        // Reset the map for the reverse operation
+
         map.clear();
-        // Populate the map with elements from the second vector this time
         for val in &combined[1] {
             map.insert(val[index[0].3], val);
         }
 
         for val in &combined[0] {
             if map.contains_key(&val[index[0].2]) {
-                join_value[1].push(val.clone()); // join values
+                join_value[1].push(val.clone());
             } else {
-                disjoin_value[1].push(val); // disjoin values
+                disjoin_value[1].push(val);
             }
         }
 
@@ -704,21 +607,18 @@ impl<F: Field + Ord> TestChip<F> {
         cartesian_product = to_add;
 
         let mut map = HashMap::new();
-
-        // Populate the map with elements from the first vector, using the join key as the map key
         for val in &cartesian_product {
             map.insert(val[3], val);
         }
 
         for val in &combined[2] {
-            // Check if the element exists in the map (thus in combined[0])
             if map.contains_key(&val[0]) {
-                join_value[2].push(val.clone()); // join values
+                join_value[2].push(val.clone());
             } else {
-                disjoin_value[2].push(val); // disjoin values
+                disjoin_value[2].push(val);
             }
         }
-        // Reset the map for the reverse operation
+
         map.clear();
         for val in &combined[2] {
             map.insert(val[0], val);
@@ -726,9 +626,9 @@ impl<F: Field + Ord> TestChip<F> {
 
         for val in &cartesian_product {
             if map.contains_key(&val[3]) {
-                join_value[3].push(val.clone()); // join values
+                join_value[3].push(val.clone());
             } else {
-                disjoin_value[3].push(val); // disjoin values
+                disjoin_value[3].push(val);
             }
         }
 
@@ -750,17 +650,12 @@ impl<F: Field + Ord> TestChip<F> {
         let mut dis_o_orderkey: Vec<u64> = disjoin_value[3].iter().map(|v| v[3]).collect();
         let mut dis_l_orderkey: Vec<u64> = disjoin_value[2].iter().map(|v| v[0]).collect();
 
-        // generate deduplicated columns for disjoin values
-        // dis_c_custkey.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        // dis_c_custkey.dedup();
-        dis_o_custkey.sort(); // sort for using dedup()
+        dis_o_custkey.sort();
         dis_o_custkey.dedup();
-        // dis_o_orderkey.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        // dis_o_orderkey.dedup();
+
         dis_l_orderkey.sort();
         dis_l_orderkey.dedup();
 
-        // concatenate two vectors for sorting
         let mut new_dedup_1: Vec<u64> = dis_o_custkey
             .clone()
             .into_iter()
@@ -771,20 +666,17 @@ impl<F: Field + Ord> TestChip<F> {
             .into_iter()
             .chain(dis_o_orderkey.clone())
             .collect();
-        // sort them
+
         new_dedup_1.sort();
         new_dedup_2.sort();
 
         // group by
-        // l_orderkey,
-        // o_orderdate,
-        // o_shippriority
         cartesian_product
             .sort_by_key(|element| element[0].clone() + element[7].clone() + element[5].clone());
 
         let mut equal_check: Vec<F> = Vec::new();
         if cartesian_product.len() > 0 {
-            equal_check.push(F::from(0)); // add the the first one must be 0
+            equal_check.push(F::from(0));
         }
 
         for row in 1..cartesian_product.len() {
@@ -801,103 +693,42 @@ impl<F: Field + Ord> TestChip<F> {
         let n = cartesian_product.len() + 1;
         let mut revenue: Vec<F> = vec![F::from(0); n];
         for i in 1..n {
-            revenue[i] = revenue[i - 1] * equal_check[i - 1]  // sum(l_extendedprice * (1 - l_discount)) as revenue,
-                + F::from(cartesian_product[i - 1][1]) * F::from((1000 - cartesian_product[i - 1][2]));
-            // cartesian_product[i - 1].push(revenue[i].clone()); // add this value to correct row of cartesian product
+            revenue[i] = revenue[i - 1] * equal_check[i - 1]
+                + F::from(cartesian_product[i - 1][1])
+                    * F::from((1000 - cartesian_product[i - 1][2]));
         }
 
-        let duration_block = start.elapsed();
-        println!("Time elapsed for block: {:?}", duration_block);
+        let _duration_block = start.elapsed();
 
         // order by
-        // revenue desc,
-        // o_orderdate;
         let mut grouped_data: Vec<Vec<u64>> = Vec::new();
         for row in &cartesian_product {
-            // Check if the group (a1 value) already exists
             match grouped_data
                 .iter_mut()
                 .find(|g| g[0] == row[0] && g[1] == row[7] && g[2] == row[5])
             {
                 Some(group) => {
-                    group[3] += row[1] * (1000 - row[2]); // Add to the existing sum
+                    group[3] += row[1] * (1000 - row[2]);
                 }
                 None => {
                     grouped_data.push(vec![row[0], row[7], row[5], row[1] * (1000 - row[2])]);
-                    // Create a new group
                 }
             }
         }
-        // println!("cartesian {:?}", cartesian_product);
-        // println!("grouped data {:?}", grouped_data);
 
         grouped_data.sort_by(|a, b| match b[3].cmp(&a[3]) {
             Ordering::Equal => a[1].cmp(&b[1]),
             other => other,
         });
 
-        // local lessthan computation assignment
-        let f_new_dedup_1: Vec<F> = new_dedup_1.clone().into_iter().map(F::from).collect();
-        let n1 = f_new_dedup_1.len();
-        let f_new_dedup_2: Vec<F> = new_dedup_2.clone().into_iter().map(F::from).collect();
-        let n2 = f_new_dedup_2.len();
-
-        // lessthan_or_equal
-
-        let n3 = cartesian_product.len();
-        let mut cartesian_left = Vec::new();
-        let mut cartesian_right = Vec::new();
-        for i in 0..n3 {
-            if i != 0 {
-                let mut new_vec: Vec<F> = Vec::new();
-                new_vec.push(From::from(cartesian_product[i][0]));
-                new_vec.push(From::from(cartesian_product[i][7]));
-                new_vec.push(From::from(cartesian_product[i][5]));
-                cartesian_right.push(new_vec);
-            }
-            if i != n3 - 1 {
-                let mut new_vec: Vec<F> = Vec::new();
-                new_vec.push(From::from(cartesian_product[i][0]));
-                new_vec.push(From::from(cartesian_product[i][7]));
-                new_vec.push(From::from(cartesian_product[i][5]));
-                cartesian_left.push(new_vec);
-            }
-        }
-
-        let n4 = grouped_data.len();
-        let mut grouped_left_revenue: Vec<Vec<F>> = Vec::new();
-        let mut grouped_right_revenue: Vec<Vec<F>> = Vec::new();
-        let mut grouped_left_orderdate: Vec<Vec<F>> = Vec::new();
-        let mut grouped_right_orderdate: Vec<Vec<F>> = Vec::new();
-
-        for i in 0..n4 {
-            if i != 0 {
-                let mut new_vec1 = Vec::new();
-                new_vec1.push(From::from(grouped_data[i][3].clone()));
-                grouped_left_revenue.push(new_vec1);
-                let mut new_vec2 = Vec::new();
-                new_vec2.push(From::from(grouped_data[i][0].clone()));
-                grouped_right_orderdate.push(new_vec2);
-            }
-            if i != n4 - 1 {
-                let mut new_vec1 = Vec::new();
-                new_vec1.push(From::from(grouped_data[i][3].clone()));
-                grouped_right_revenue.push(new_vec1);
-                let mut new_vec2 = Vec::new();
-                new_vec2.push(From::from(grouped_data[i][0].clone()));
-                grouped_left_orderdate.push(new_vec2);
-            }
-        }
-
         layouter.assign_region(
             || "witness",
             |mut region| {
-                //assign input values
                 // customer
                 for i in 0..customer.len() {
                     self.config.q_enable[0].enable(&mut region, i)?;
                     if c_check[i] == 1 {
-                        self.config.q_join[3].enable(&mut region, i)?; // used to select the valid rows for permutation
+                        self.config.q_join[3].enable(&mut region, i)?;
                     }
                     for j in 0..customer[0].len() {
                         region.assign_advice(
@@ -922,12 +753,12 @@ impl<F: Field + Ord> TestChip<F> {
                         || Value::known(F::from(condition[0])),
                     )?;
                 }
+
                 // orders
                 for i in 0..orders.len() {
                     self.config.q_enable[1].enable(&mut region, i)?;
-                    // permutation check between orders and join_value[0]
                     if o_check[i] == true {
-                        self.config.q_join[2].enable(&mut region, i)?; // used to select the valid rows for permutation
+                        self.config.q_join[2].enable(&mut region, i)?;
                     }
                     for j in 0..orders[0].len() {
                         region.assign_advice(
@@ -953,43 +784,47 @@ impl<F: Field + Ord> TestChip<F> {
                     )?;
                 }
 
-                // lineitem
-                for i in 0..lineitem.len() {
+                // lineitem (filtered table l_combined) + predicate check on these rows
+                for i in 0..l_combined.len() {
+                    // enable filter predicate gate
                     self.config.q_enable[2].enable(&mut region, i)?;
-                    if l_check[i] == true {
-                        self.config.q_join[4].enable(&mut region, i)?; // used to select the valid rows for permutation
-                    }
-                    for j in 0..lineitem[0].len() {
-                        region.assign_advice(
-                            || "lineitem",
-                            self.config.lineitem[j],
-                            i,
-                            || Value::known(F::from(lineitem[i][j])),
-                        )?;
-                    }
 
-                    region.assign_advice(
-                        || "check2",
-                        self.config.check[2],
-                        i,
-                        || Value::known(F::from(l_check[i] as u64)),
-                    )?;
+                    // enable permutation selector for lineitem table
+                    self.config.q_join[4].enable(&mut region, i)?;
 
+                    // store condition[2] = condition[1] for l_shipdate comparison
                     region.assign_advice(
                         || "condition2",
                         self.config.condition[2],
                         i,
                         || Value::known(F::from(condition[1])),
                     )?;
+
+                    for j in 0..l_combined[0].len() {
+                        region.assign_advice(
+                            || "lineitem_filtered",
+                            self.config.lineitem[j],
+                            i,
+                            || Value::known(F::from(l_combined[i][j])),
+                        )?;
+                    }
+
+                    // check column for predicate
+                    region.assign_advice(
+                        || "check2",
+                        self.config.check[2],
+                        i,
+                        || Value::known(F::from(l_check[i] as u64)),
+                    )?;
                 }
 
+                // join1
                 for i in 0..join_value[0].len() {
-                    self.config.q_join[0].enable(&mut region, i)?; // join1
+                    self.config.q_join[0].enable(&mut region, i)?;
                     for j in 0..join_value[1].len() {
                         if join_value[0][i][2] == join_value[1][j][1] {
                             for k in 0..join_value[1][0].len() {
                                 let value_to_assign = join_value[1][j][k];
-                                // println!("b[k]--------{:?}", join_value[1][i][k]);
                                 region.assign_advice(
                                     || "generate the first join",
                                     self.config.join1[k],
@@ -1002,9 +837,9 @@ impl<F: Field + Ord> TestChip<F> {
                     }
                 }
 
-                //assign join2 before the second join locally
+                // join2
                 for i in 0..join_value[2].len() {
-                    self.config.q_join[1].enable(&mut region, i)?; // join2
+                    self.config.q_join[1].enable(&mut region, i)?;
                     for j in 0..join_value[3].len() {
                         if join_value[2][i][0] == join_value[3][j][3] {
                             for k in 0..join_value[3][0].len() {
@@ -1024,7 +859,6 @@ impl<F: Field + Ord> TestChip<F> {
                 // assign join and disjoin values
                 for k in 0..join_value.len() {
                     let join_config = &self.config.join_group[k];
-                    // Process join_value[k]
                     for i in 0..join_value[k].len() {
                         for j in 0..join_value[k][0].len() {
                             region.assign_advice(
@@ -1040,7 +874,7 @@ impl<F: Field + Ord> TestChip<F> {
                     for i in 0..disjoin_value[k].len() {
                         for j in 0..disjoin_value[k][i].len() {
                             region.assign_advice(
-                                || "n",
+                                || "disjoin_config",
                                 disjoin_config[j],
                                 i,
                                 || Value::known(F::from(disjoin_value[k][i][j])),
@@ -1053,50 +887,41 @@ impl<F: Field + Ord> TestChip<F> {
                 for k in 0..3 {
                     let join_config = &self.config.join_group[k];
                     let perm_config = &self.config.perm_helper[k];
-                    // Process join_value[k]
+
                     for i in 0..join_value[k].len() {
                         for j in 0..join_value[k][0].len() {
-                            let cell1 = region
-                                .assign_advice(
-                                    || "join_config",
-                                    join_config[j],
-                                    i,
-                                    || Value::known(F::from(join_value[k][i][j])),
-                                )?
-                                .cell();
-                            let cell2 = region
-                                .assign_advice(
-                                    || "perm_config",
-                                    perm_config[j],
-                                    i,
-                                    || Value::known(F::from(join_value[k][i][j])),
-                                )?
-                                .cell();
-                            // region.constrain_equal(cell1, cell2)?; // copy constraints
+                            region.assign_advice(
+                                || "perm_join",
+                                perm_config[j],
+                                i,
+                                || Value::known(F::from(join_value[k][i][j])),
+                            )?;
+                            // (optional) also assign join_config (already assigned above)
+                            let _ = region.assign_advice(
+                                || "join_config_copy",
+                                join_config[j],
+                                i,
+                                || Value::known(F::from(join_value[k][i][j])),
+                            )?;
                         }
                     }
 
                     let disjoin_config = &self.config.disjoin_group[k];
                     for i in 0..disjoin_value[k].len() {
                         for j in 0..disjoin_value[k][i].len() {
-                            let cell1 = region
-                                .assign_advice(
-                                    || "n",
-                                    disjoin_config[j],
-                                    i,
-                                    || Value::known(F::from(disjoin_value[k][i][j])),
-                                )?
-                                .cell();
-
-                            let cell2 = region
-                                .assign_advice(
-                                    || "perm_config",
-                                    perm_config[j],
-                                    i + join_value[k].len(),
-                                    || Value::known(F::from(disjoin_value[k][i][j])),
-                                )?
-                                .cell();
-                            // region.constrain_equal(cell1, cell2)?; // copy constraints
+                            region.assign_advice(
+                                || "perm_disjoin",
+                                perm_config[j],
+                                i + join_value[k].len(),
+                                || Value::known(F::from(disjoin_value[k][i][j])),
+                            )?;
+                            // (optional) also assign disjoin_config (already assigned above)
+                            let _ = region.assign_advice(
+                                || "disjoin_config_copy",
+                                disjoin_config[j],
+                                i,
+                                || Value::known(F::from(disjoin_value[k][i][j])),
+                            )?;
                         }
                     }
                 }
@@ -1104,7 +929,6 @@ impl<F: Field + Ord> TestChip<F> {
                 for i in 0..join_value[0].len() + disjoin_value[0].len() {
                     self.config.q_join[5].enable(&mut region, i)?;
                 }
-
                 for i in 0..join_value[1].len() + disjoin_value[1].len() {
                     self.config.q_join[6].enable(&mut region, i)?;
                 }
@@ -1112,107 +936,68 @@ impl<F: Field + Ord> TestChip<F> {
                     self.config.q_join[7].enable(&mut region, i)?;
                 }
 
-                // println!{"Join Value: {:?}", join_value[0].len()};
-                // println!{"Disjoin[1] Value: {:?}", join_value[1].len() + disjoin_value[1].len()};
-                // process::exit(0);
-
-                // for i in 0..join_value[0].len() {
-                //     self.config.q_join[2].enable(&mut region, i)?;
-                //     region.assign_advice(
-                //         || "join_config",
-                //         self.config.instance_test1,
-                //         i,
-                //         || Value::known(join_value[0][i][0]),
-                //     )?;
-                //     region.assign_advice(
-                //         || "join_config",
-                //         self.config.instance_test2,
-                //         i,
-                //         || Value::known(join_value[0][i][0]),
-                //     )?;
-                // }
-
+                // deduplicate columns + helper
                 for i in 0..dis_o_custkey.len() {
-                    let cell1 = region
-                        .assign_advice(
-                            || "deduplicated_b2_vec",
-                            self.config.deduplicate[0],
-                            i,
-                            || Value::known(F::from(dis_o_custkey[i])),
-                        )?
-                        .cell();
-                    let cell2 = region
-                        .assign_advice(
-                            || "deduplicate_helper",
-                            self.config.deduplicate_helper[0],
-                            i,
-                            || Value::known(F::from(dis_o_custkey[i])),
-                        )?
-                        .cell();
-                    // region.constrain_equal(cell1, cell2)?;
+                    let _ = region.assign_advice(
+                        || "dedup_o_custkey",
+                        self.config.deduplicate[0],
+                        i,
+                        || Value::known(F::from(dis_o_custkey[i])),
+                    )?;
+                    let _ = region.assign_advice(
+                        || "dedup_helper_0",
+                        self.config.deduplicate_helper[0],
+                        i,
+                        || Value::known(F::from(dis_o_custkey[i])),
+                    )?;
                 }
                 for i in 0..dis_c_custkey.len() {
-                    let cell1 = region
-                        .assign_advice(
-                            || "deduplicated_a2_vec",
-                            self.config.deduplicate[1],
-                            i,
-                            || Value::known(F::from(dis_c_custkey[i])),
-                        )?
-                        .cell();
-                    let cell2 = region
-                        .assign_advice(
-                            || "deduplicate_helper",
-                            self.config.deduplicate_helper[0],
-                            i + dis_o_custkey.len(),
-                            || Value::known(F::from(dis_c_custkey[i])),
-                        )?
-                        .cell();
-                    // region.constrain_equal(cell1, cell2)?;
+                    let _ = region.assign_advice(
+                        || "dedup_c_custkey",
+                        self.config.deduplicate[1],
+                        i,
+                        || Value::known(F::from(dis_c_custkey[i])),
+                    )?;
+                    let _ = region.assign_advice(
+                        || "dedup_helper_0_tail",
+                        self.config.deduplicate_helper[0],
+                        i + dis_o_custkey.len(),
+                        || Value::known(F::from(dis_c_custkey[i])),
+                    )?;
                 }
                 for i in 0..dis_l_orderkey.len() {
-                    let cell1 = region
-                        .assign_advice(
-                            || "deduplicated_d2_vec",
-                            self.config.deduplicate[2],
-                            i,
-                            || Value::known(F::from(dis_l_orderkey[i])),
-                        )?
-                        .cell();
-                    let cell2 = region
-                        .assign_advice(
-                            || "deduplicate_helper",
-                            self.config.deduplicate_helper[1],
-                            i,
-                            || Value::known(F::from(dis_l_orderkey[i])),
-                        )?
-                        .cell();
-                    // region.constrain_equal(cell1, cell2)?;
+                    let _ = region.assign_advice(
+                        || "dedup_l_orderkey",
+                        self.config.deduplicate[2],
+                        i,
+                        || Value::known(F::from(dis_l_orderkey[i])),
+                    )?;
+                    let _ = region.assign_advice(
+                        || "dedup_helper_1",
+                        self.config.deduplicate_helper[1],
+                        i,
+                        || Value::known(F::from(dis_l_orderkey[i])),
+                    )?;
                 }
                 for i in 0..dis_o_orderkey.len() {
-                    let cell1 = region
-                        .assign_advice(
-                            || "deduplicated_c2_vec",
-                            self.config.deduplicate[3],
-                            i,
-                            || Value::known(F::from(dis_o_orderkey[i])),
-                        )?
-                        .cell();
-                    let cell2 = region
-                        .assign_advice(
-                            || "deduplicate_helper",
-                            self.config.deduplicate_helper[1],
-                            i + dis_l_orderkey.len(),
-                            || Value::known(F::from(dis_o_orderkey[i])),
-                        )?
-                        .cell();
-                    // region.constrain_equal(cell1, cell2)?;
+                    let _ = region.assign_advice(
+                        || "dedup_o_orderkey",
+                        self.config.deduplicate[3],
+                        i,
+                        || Value::known(F::from(dis_o_orderkey[i])),
+                    )?;
+                    let _ = region.assign_advice(
+                        || "dedup_helper_1_tail",
+                        self.config.deduplicate_helper[1],
+                        i + dis_l_orderkey.len(),
+                        || Value::known(F::from(dis_o_orderkey[i])),
+                    )?;
                 }
 
-                // assign the new dedup
+                // assign the new dedup (sorted)
                 for i in 0..new_dedup_1.len() {
-                    if i < new_dedup_1.len() - 1 {
-                        self.config.q_sort[0].enable(&mut region, i)?; // start at index 1
+                    if i > 0 {
+                        self.config.q_sort[0].enable(&mut region, i)?;
                     }
                     region.assign_advice(
                         || "new_dedup_1",
@@ -1221,10 +1006,10 @@ impl<F: Field + Ord> TestChip<F> {
                         || Value::known(F::from(new_dedup_1[i])),
                     )?;
                 }
-                // println!("new_dedup_2 {:?}", new_dedup_2.len());
+
                 for i in 0..new_dedup_2.len() {
-                    if i < new_dedup_2.len() - 1 {
-                        self.config.q_sort[1].enable(&mut region, i)?; // start at index 1
+                    if i > 0 {
+                        self.config.q_sort[1].enable(&mut region, i)?;
                     }
                     region.assign_advice(
                         || "new_dedup_2",
@@ -1254,8 +1039,8 @@ impl<F: Field + Ord> TestChip<F> {
                 }
 
                 for i in 0..cartesian_product.len() {
-                    if i < cartesian_product.len() - 1 {
-                        self.config.q_sort[2].enable(&mut region, i)?; // q_sort[2]
+                    if i > 0 {
+                        self.config.q_sort[2].enable(&mut region, i)?;
                     }
                     for (idx, &j) in [0, 7, 5, 1, 2].iter().enumerate() {
                         region.assign_advice(
@@ -1267,10 +1052,9 @@ impl<F: Field + Ord> TestChip<F> {
                     }
                 }
 
-                // println!("grouped data 1 {:?}", grouped_data.len());
                 for i in 0..grouped_data.len() {
-                    if i < grouped_data.len() - 1 {
-                        self.config.q_sort[3].enable(&mut region, i)?; // start at the index 1
+                    if i > 0 {
+                        self.config.q_sort[3].enable(&mut region, i)?;
                     }
                     for j in 0..4 {
                         region.assign_advice(
@@ -1282,78 +1066,109 @@ impl<F: Field + Ord> TestChip<F> {
                     }
                 }
 
-                // chip assign
+                // chip assign: c_mktsegment equality
                 for i in 0..customer.len() {
                     equal_chip[0].assign(
                         &mut region,
                         i,
                         Value::known(F::from(customer[i][0]) - F::from(condition[0])),
-                    )?; // c_mktsegment = ':1'
+                    )?;
                 }
-                // for i in 0..grouped_data.len() {
-                //     if i < grouped_data.len() - 1 {
-                //         equal_chip[1].assign(
-                //             // iszerochip assignment
-                //             &mut region,
-                //             i,
-                //             Value::known(F::from(grouped_data[i][3] - grouped_data[i + 1][3])),
-                //         )?; // revenue[i-1] = revenue [i]
-                //     }
-                // }
 
-                lt_compare_chip[0].assign_right_constant(
-                    &mut region,
-                    orders
-                        .iter()
-                        .filter_map(|row| row.get(0)) // Get the first element of the row, if it exists
-                        .map(|&element| F::from(element)) // Convert each element to type `F`
-                        .collect(),
-                    F::from(condition[1]),
-                )?;
+                // chip assign: o_orderdate < condition[1]
+                for i in 0..orders.len() {
+                    lt_compare_chip[0].assign(
+                        &mut region,
+                        i,
+                        Value::known(F::from(orders[i][0])),
+                        Value::known(F::from(condition[1])),
+                    )?;
+                }
 
-                lt_compare_chip[1].assign_left_constant(
-                    &mut region,
-                    F::from(condition[1]),
-                    lineitem
-                        .iter()
-                        .filter_map(|row| row.get(3)) // Get the first element of the row, if it exists
-                        .map(|&element| F::from(element)) // Convert each element to type `F`
-                        .collect(),
-                )?;
+                // chip assign: condition[1] < l_shipdate for filtered lineitem rows
+                for i in 0..l_combined.len() {
+                    lt_compare_chip[1].assign(
+                        &mut region,
+                        i,
+                        Value::known(F::from(condition[1])),
+                        Value::known(F::from(l_combined[i][3])),
+                    )?;
+                }
 
-                lt_compare_chip[2].assign(
-                    &mut region,
-                    f_new_dedup_1.clone()[0..n1 - 1].to_vec(),
-                    f_new_dedup_1.clone()[1..n1].to_vec(),
-                )?;
+                // NOTE: indices shift because we removed the split extra lt chip.
+                // lt_compare_chip[2] => new_dedup_1 sort
+                for i in 0..new_dedup_1.len() {
+                    if i > 0 {
+                        lt_compare_chip[2].assign(
+                            &mut region,
+                            i,
+                            Value::known(F::from(new_dedup_1[i - 1])),
+                            Value::known(F::from(new_dedup_1[i])),
+                        )?;
+                    }
+                }
 
-                lt_compare_chip[3].assign(
-                    &mut region,
-                    f_new_dedup_2.clone()[0..n2 - 1].to_vec(),
-                    f_new_dedup_2.clone()[1..n2].to_vec(),
-                )?;
+                // lt_compare_chip[3] => new_dedup_2 sort
+                for i in 0..new_dedup_2.len() {
+                    if i > 0 {
+                        lt_compare_chip[3].assign(
+                            &mut region,
+                            i,
+                            Value::known(F::from(new_dedup_2[i - 1])),
+                            Value::known(F::from(new_dedup_2[i])),
+                        )?;
+                    }
+                }
 
-                // compare_chip[0].assign(
-                //     &mut region,
-                //     cartesian_left.clone(),
-                //     cartesian_right.clone(),
-                // )?;
-                // compare_chip[1].assign(
-                //     &mut region,
-                //     grouped_left_revenue.clone(),
-                //     grouped_right_revenue.clone(),
-                // )?;
-                // compare_chip[2].assign(
-                //     &mut region,
-                //     grouped_left_orderdate.clone(),
-                //     grouped_right_orderdate.clone(),
-                // )?;
+                // groupby compare assign
+                for i in 0..cartesian_product.len() {
+                    if i > 0 {
+                        compare_chip[0].assign(
+                            &mut region,
+                            i,
+                            &[
+                                F::from(cartesian_product[i - 1][0]),
+                                F::from(cartesian_product[i - 1][7]),
+                                F::from(cartesian_product[i - 1][5]),
+                            ],
+                            &[
+                                F::from(cartesian_product[i][0]),
+                                F::from(cartesian_product[i][7]),
+                                F::from(cartesian_product[i][5]),
+                            ],
+                        )?;
+                    }
+                }
 
-                let duration_block = start.elapsed();
-                println!("Time elapsed for block: {:?}", duration_block);
+                // orderby scenario checks
+                for i in 0..grouped_data.len() {
+                    if i > 0 {
+                        equal_chip[1].assign(
+                            &mut region,
+                            i,
+                            Value::known(
+                                F::from(grouped_data[i - 1][3]) - F::from(grouped_data[i][3]),
+                            ),
+                        )?;
+
+                        compare_chip[1].assign(
+                            &mut region,
+                            i,
+                            &[F::from(grouped_data[i][3])],
+                            &[F::from(grouped_data[i - 1][3])],
+                        )?;
+
+                        compare_chip[2].assign(
+                            &mut region,
+                            i,
+                            &[F::from(grouped_data[i - 1][0])],
+                            &[F::from(grouped_data[i][0])],
+                        )?;
+                    }
+                }
 
                 let out = region.assign_advice(
-                    || "orderby",
+                    || "instance_test",
                     self.config.instance_test,
                     0,
                     || Value::known(F::from(1)),
@@ -1377,9 +1192,7 @@ struct MyCircuit<F> {
     customer: Vec<Vec<u64>>,
     orders: Vec<Vec<u64>>,
     lineitem: Vec<Vec<u64>>,
-
     pub condition: [u64; 2],
-
     _marker: PhantomData<F>,
 }
 
@@ -1389,7 +1202,6 @@ impl<F: Copy + Default> Default for MyCircuit<F> {
             customer: Vec::new(),
             orders: Vec::new(),
             lineitem: Vec::new(),
-
             condition: [Default::default(); 2],
             _marker: PhantomData,
         }
@@ -1424,7 +1236,6 @@ impl<F: Field + Ord> Circuit<F> for MyCircuit<F> {
         )?;
 
         test_chip.expose_public(&mut layouter, out_cells, 0)?;
-
         Ok(())
     }
 }
@@ -1432,11 +1243,8 @@ impl<F: Field + Ord> Circuit<F> for MyCircuit<F> {
 #[cfg(test)]
 mod tests {
     use super::MyCircuit;
-    // use rand::Rng;
-    // use halo2_proofs::poly::commitment::Params
     use crate::data::data_processing;
     use chrono::{DateTime, NaiveDate, Utc};
-    // use halo2_proofs::{dev::MockProver};
     use halo2_proofs::dev::MockProver;
     use std::marker::PhantomData;
 
@@ -1471,55 +1279,42 @@ mod tests {
     fn generate_and_verify_proof<C: Circuit<Fp>>(
         k: u32,
         circuit: C,
-        public_input: &[Fp], // Adjust the type according to your actual public input type
+        public_input: &[Fp],
         proof_path: &str,
     ) {
-        // Time to generate parameters
-        // let params_time_start = Instant::now();
-        // let params: ParamsIPA<vesta::Affine> = ParamsIPA::new(k);
-        let params_path = "/home/cc/halo2-TPCH/src/sql/param17";
-        // let mut fd = std::fs::File::create(&proof_path).unwrap();
-        // params.write(&mut fd).unwrap();
-        // println!("Time to generate params {:?}", params_time);
-
-        // read params16
+        let params_path = "/home2/binbin/PoneglyphDB/src/proof/param16";
         let mut fd = std::fs::File::open(&params_path).unwrap();
         let params = ParamsIPA::<vesta::Affine>::read(&mut fd).unwrap();
 
-        // Time to generate verification key (vk)
         let params_time_start = Instant::now();
         let vk = keygen_vk(&params, &circuit).expect("keygen_vk should not fail");
         let params_time = params_time_start.elapsed();
         println!("Time to generate vk {:?}", params_time);
 
-        // Time to generate proving key (pk)
         let params_time_start = Instant::now();
         let pk = keygen_pk(&params, vk.clone(), &circuit).expect("keygen_pk should not fail");
         let params_time = params_time_start.elapsed();
         println!("Time to generate pk {:?}", params_time);
 
-        // Proof generation
         let mut rng = OsRng;
         let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
         create_proof::<IPACommitmentScheme<_>, ProverIPA<_>, _, _, _, _>(
             &params,
             &pk,
             &[circuit],
-            &[&[public_input]], // Adjust as necessary for your public input handling
+            &[&[public_input]],
             &mut rng,
             &mut transcript,
         )
         .expect("proof generation should not fail");
         let proof = transcript.finalize();
 
-        // Write proof to file
         File::create(Path::new(proof_path))
             .expect("Failed to create proof file")
             .write_all(&proof)
             .expect("Failed to write proof");
         println!("Proof written to: {}", proof_path);
 
-        // Proof verification
         let strategy = SingleStrategy::new(&params);
         let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
         assert!(
@@ -1527,7 +1322,7 @@ mod tests {
                 &params,
                 pk.get_vk(),
                 strategy,
-                &[&[public_input]], // Adjust as necessary
+                &[&[public_input]],
                 &mut transcript
             )
             .is_ok(),
@@ -1541,11 +1336,9 @@ mod tests {
 
         fn string_to_u64(s: &str) -> u64 {
             let mut result = 0;
-
             for (i, c) in s.chars().enumerate() {
                 result += (i as u64 + 1) * (c as u64);
             }
-
             result
         }
         fn scale_by_1000(x: f64) -> u64 {
@@ -1558,54 +1351,30 @@ mod tests {
                         DateTime::<Utc>::from_utc(date.and_hms(0, 0, 0), Utc);
                     datetime.timestamp() as u64
                 }
-                Err(_) => 0, // Return a default value like 0 in case of an error
+                Err(_) => 0,
             }
         }
 
-        fn compact_date_representation(date_str: &str, base_year: u64) -> u64 {
-            let parts: Vec<&str> = date_str.split('-').collect();
-
-            let year: u64 = parts[0].parse().unwrap();
-            let month: u64 = parts[1].parse().unwrap();
-            let day: u64 = parts[2].parse().unwrap();
-
-            // Calculate the year offset from the base year
-            let year_offset = year - base_year;
-
-            // Combine components into a compact representation
-            // Adjust the formula as needed to fit your specific requirements
-            let compact_date = year_offset * 10000 + month * 100 + day;
-
-            compact_date
-        }
-
-        // let customer_file_path = "/Users/binbingu/halo2-TPCH/src/data/customer.tbl";
-        // let orders_file_path = "/Users/binbingu/halo2-TPCH/src/data/orders.tbl";
-        // let lineitem_file_path = "/Users/binbingu/halo2-TPCH/src/data/lineitem.tbl";
-
-        let customer_file_path = "/home/cc/halo2-TPCH/src/data/customer.tbl";
-        let orders_file_path = "/home/cc/halo2-TPCH/src/data/orders.tbl";
-        let lineitem_file_path = "/home/cc/halo2-TPCH/src/data/lineitem.tbl";
+        let customer_file_path = "/home2/binbin/PoneglyphDB/src/data/customer.tbl";
+        let orders_file_path = "/home2/binbin/PoneglyphDB/src/data/orders.tbl";
+        let lineitem_file_path = "/home2/binbin/PoneglyphDB/src/data/lineitem.tbl";
 
         let mut customer: Vec<Vec<u64>> = Vec::new();
         let mut orders: Vec<Vec<u64>> = Vec::new();
         let mut lineitem: Vec<Vec<u64>> = Vec::new();
 
         if let Ok(records) = data_processing::customer_read_records_from_file(customer_file_path) {
-            // Convert the Vec<Region> to a 2D vector
             customer = records
                 .iter()
                 .map(|record| vec![string_to_u64(&record.c_mktsegment), record.c_custkey])
                 .collect();
         }
         if let Ok(records) = data_processing::orders_read_records_from_file(orders_file_path) {
-            // Convert the Vec<Region> to a 2D vector
             orders = records
                 .iter()
                 .map(|record| {
                     vec![
-                        // date_to_timestamp(&record.o_orderdate),
-                        compact_date_representation(&record.o_orderdate, 1980),
+                        date_to_timestamp(&record.o_orderdate),
                         record.o_shippriority,
                         record.o_custkey,
                         record.o_orderkey,
@@ -1614,7 +1383,6 @@ mod tests {
                 .collect();
         }
         if let Ok(records) = data_processing::lineitem_read_records_from_file(lineitem_file_path) {
-            // Convert the Vec<Region> to a 2D vector
             lineitem = records
                 .iter()
                 .map(|record| {
@@ -1622,27 +1390,13 @@ mod tests {
                         record.l_orderkey,
                         scale_by_1000(record.l_extendedprice),
                         scale_by_1000(record.l_discount),
-                        // Fp::from(string_to_u64(&record.l_shipdate)),
-                        // date_to_timestamp(&record.l_shipdate),
-                        compact_date_representation(&record.l_shipdate, 1980),
+                        date_to_timestamp(&record.l_shipdate),
                     ]
                 })
                 .collect();
         }
 
-        let condition = [
-            string_to_u64("HOUSEHOLD"),
-            compact_date_representation("1995-03-25", 1980),
-        ];
-        // let condition = [string_to_u64("HOUSEHOLD"), date_to_timestamp("1995-03-25")];
-
-        // c_mktsegment = 'HOUSEHOLD'   -> 3367
-        // o_orderdate < date '1995-03-25'and l_shipdate > date '1995-03-25'  ->796089600
-        //  BUILDING ->   2651;    1996-03-13 -> 2731
-
-        // let customer: Vec<Vec<u64>> = customer.iter().take(100).cloned().collect();
-        // let orders: Vec<Vec<u64>> = orders.iter().take(100).cloned().collect();
-        let lineitem: Vec<Vec<u64>> = lineitem.iter().take(100).cloned().collect();
+        let condition = [string_to_u64("HOUSEHOLD"), date_to_timestamp("1995-03-25")];
 
         let circuit = MyCircuit::<Fp> {
             customer,
@@ -1654,17 +1408,14 @@ mod tests {
 
         let public_input = vec![Fp::from(1)];
 
-        // let test = true;
-        let test = false;
-
+        let test = true;
+        // let test = false;
         if test {
             let prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
             prover.assert_satisfied();
         } else {
-            let proof_path = "/home/cc/halo2-TPCH/src/sql/proof_q3";
+            let proof_path = "/home2/binbin/PoneglyphDB/src/proof/proof_obj";
             generate_and_verify_proof(k, circuit, &public_input, proof_path);
         }
-
-        // process::exit(0);
     }
 }
