@@ -25,8 +25,6 @@ impl<F> Field for F where F: PrimeField<Repr = [u8; 32]> {}
 #[derive(Clone, Debug)]
 pub struct TestCircuitConfig<F: Field + Ord> {
     q_enable: Vec<Selector>,
-    q_join: Vec<Selector>,
-    q_sort: Vec<Selector>,
 
     q_flagged_lookup: Selector,
     q_lookup_complex: Selector,
@@ -787,8 +785,6 @@ impl<F: Field + Ord> TestChip<F> {
 
         TestCircuitConfig {
             q_enable,
-            q_join,
-            q_sort,
             q_accu,
 
             q_flagged_lookup,
@@ -1977,7 +1973,7 @@ mod tests {
             let prover = MockProver::run(k, &circuit, vec![public_input]).unwrap();
             prover.assert_satisfied();
         } else {
-            let proof_path = "/home2/binbin/PoneglyphDB/src/proof/proof_obj_q3";
+            let proof_path = "/home2/binbin/PoneglyphDB/src/proof/proof_obj_q13";
             generate_and_verify_proof(circuit, &public_input, proof_path);
         }
     }
