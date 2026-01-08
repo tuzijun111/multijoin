@@ -1282,7 +1282,7 @@ mod tests {
         }
         let mut regions = vec![];
         if let Ok(rec) =
-            data_processing::region_read_records_from_csv(&format!("{}/region.cvs", data_dir))
+            data_processing::region_read_records_from_cvs(&format!("{}/region.cvs", data_dir))
         {
             regions = rec
                 .iter()

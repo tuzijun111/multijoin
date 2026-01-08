@@ -18,7 +18,6 @@ use std::time::Instant;
 
 use std::mem;
 
-
 const NUM_BYTES: usize = 5;
 
 pub trait Field: PrimeField<Repr = [u8; 32]> {}
@@ -1476,7 +1475,7 @@ mod tests {
                 .collect();
         }
 
-        if let Ok(records) = data_processing::region_read_records_from_csv(region_file_path) {
+        if let Ok(records) = data_processing::region_read_records_from_cvs(region_file_path) {
             // Convert the Vec<Region> to a 2D vector
             regions = records
                 .iter()

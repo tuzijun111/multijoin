@@ -282,8 +282,8 @@ pub(crate) fn supplier_read_records_from_file(file_path: &str) -> Result<Vec<Sup
     Ok(records)
 }
 
-// Function to read records from a .csv file
-pub(crate) fn region_read_records_from_csv(file_path: &str) -> Result<Vec<Region>, csv::Error> {
+// Function to read records from a .cvs file
+pub(crate) fn region_read_records_from_cvs(file_path: &str) -> Result<Vec<Region>, csv::Error> {
     let file = File::open(file_path)?;
     // let mut reader = ReaderBuilder::new().delimiter(b'|').from_reader(file);
     let mut reader = ReaderBuilder::new()
@@ -356,7 +356,7 @@ mod tests {
             println!("Failed to read records from file1");
         }
 
-        if let Ok(records) = region_read_records_from_csv("/home/cc/halo2-TPCH/src/data/region.cvs")
+        if let Ok(records) = region_read_records_from_cvs("/home/cc/halo2-TPCH/src/data/region.cvs")
         {
             println!("{:?}", string_to_u64(&records[3].r_name));
         } else {
