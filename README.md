@@ -53,11 +53,11 @@ export RUST_MIN_STACK=33554432
 
 Select appropriate Halo2 public parameters depending on dataset size:
 
-| Dataset Size | Queries (Q1, Q5, Q8, Q9, Q18) | Query Q3 |
-| ------------ | ----------------------------- | -------- |
-| 60k Rows     | k = 16                        | k = 15   |
-| 120k Rows    | k = 17                        | k = 16   |
-| 240k Rows    | k = 18                        | k = 17   |
+| Dataset Size | Queries (Q1, Q3, Q5, Q8, Q9, Q18) 
+| ------------ | --------------------------------- 
+| 60k Rows     | k = 16                        
+| 120k Rows    | k = 17                        
+| 240k Rows    | k = 18                        
 
 ---
 
